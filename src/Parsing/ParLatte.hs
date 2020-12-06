@@ -958,7 +958,7 @@ happyReduction_63 (happy_x_5 `HappyStk`
 	case happyOut30 happy_x_2 of { (HappyWrap30 happy_var_2) -> 
 	case happyOut25 happy_x_5 of { (HappyWrap25 happy_var_5) -> 
 	happyIn25
-		 ((Just (tokenLineCol happy_var_1), Parsing.AbsLatte.EClassCoerce (Just (tokenLineCol happy_var_1)) (snd happy_var_2)(snd happy_var_5))
+		 ((Just (tokenLineCol happy_var_1), Parsing.AbsLatte.EClassArrCoerce (Just (tokenLineCol happy_var_1)) (snd happy_var_2)(snd happy_var_5))
 	) `HappyStk` happyRest}}}
 
 happyReduce_64 = happyReduce 4# 21# happyReduction_64

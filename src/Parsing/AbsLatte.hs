@@ -108,7 +108,6 @@ data Type a
     = BltinType a (BuiltinType a)
     | ArrType a (ArrayType a)
     | UserType a Ident
-    | Fun a (Type a) [Type a]
   deriving (Eq, Ord, Show, Read)
 
 instance Functor Type where
@@ -116,7 +115,6 @@ instance Functor Type where
         BltinType a builtintype -> BltinType (f a) (fmap f builtintype)
         ArrType a arraytype -> ArrType (f a) (fmap f arraytype)
         UserType a ident -> UserType (f a) ident
-        Fun a type_ types -> Fun (f a) (fmap f type_) (map (fmap f) types)
 data Expr a
     = ENewArr a (Type a) (Expr a)
     | ENewObj a (Type a)
@@ -128,6 +126,7 @@ data Expr a
     | EBasicCoerce a (BuiltinType a) (Expr a)
     | EBasicArrCoerce a (BuiltinType a) (Expr a)
     | EClassCoerce a (Expr a) (Expr a)
+    | EClassArrCoerce a (Expr a) (Expr a)
     | EApp a Ident [Expr a]
     | EClassMethod a (Expr a) Ident [Expr a]
     | EClassField a (Expr a) Ident
@@ -153,6 +152,7 @@ instance Functor Expr where
         EBasicCoerce a builtintype expr -> EBasicCoerce (f a) (fmap f builtintype) (fmap f expr)
         EBasicArrCoerce a builtintype expr -> EBasicArrCoerce (f a) (fmap f builtintype) (fmap f expr)
         EClassCoerce a expr1 expr2 -> EClassCoerce (f a) (fmap f expr1) (fmap f expr2)
+        EClassArrCoerce a expr1 expr2 -> EClassArrCoerce (f a) (fmap f expr1) (fmap f expr2)
         EApp a ident exprs -> EApp (f a) ident (map (fmap f) exprs)
         EClassMethod a expr ident exprs -> EClassMethod (f a) (fmap f expr) ident (map (fmap f) exprs)
         EClassField a expr ident -> EClassField (f a) (fmap f expr) ident

@@ -336,7 +336,7 @@ Expr6 :: {
   (Just (tokenLineCol $1), Parsing.AbsLatte.EClassCoerce (Just (tokenLineCol $1)) (snd $2)(snd $4)) 
 }
 | '(' Expr '[]' ')' Expr6 {
-  (Just (tokenLineCol $1), Parsing.AbsLatte.EClassCoerce (Just (tokenLineCol $1)) (snd $2)(snd $5)) 
+  (Just (tokenLineCol $1), Parsing.AbsLatte.EClassArrCoerce (Just (tokenLineCol $1)) (snd $2)(snd $5)) 
 }
 | Ident '(' ListExpr ')' {
   (fst $1, Parsing.AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
