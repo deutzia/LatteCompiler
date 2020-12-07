@@ -24,7 +24,7 @@ runFullCompile filename = do
     case pProgram (tokens code) of
         Ok program -> do
             let outFilename = fileToS
-            let pass1Result = runExcept (evalStateT (runReaderT (pass1 program) (M.empty, M.empty)) M.empty)
+            let pass1Result = runExcept (evalStateT (runReaderT (pass1 program) (M.empty, M.empty)) (M.empty, 0))
             case pass1Result of
                 Left (Just (col, row), err) -> hPutStrLn stderr $ "Error at column " ++ show col ++ " row " ++ show row ++ ": " ++ err
                 Left (Nothing, err) -> hPutStrLn stderr $ "Error at unknown location: " ++ err

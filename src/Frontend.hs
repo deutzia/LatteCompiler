@@ -64,8 +64,8 @@ data IntOp = Mul | Div | Add | Sub | Mod
 data IntRel = Lth | Le | Gth | Ge | Equ | Neq
 data BoolOp = Or | And
 
-type Venv = M.Map Ident Type -- variable env
 type Depth = Integer
+type Venv = M.Map Ident (Type, Depth) -- variable env
 type Fenv = M.Map Ident (Type, [Type]) -- function env
 type Cenv = M.Map Ident (M.Map Ident Type, M.Map Ident (Type, [Type])) -- classes env
 type Pass1M = ReaderT (Fenv, Cenv) (StateT (Venv, Depth) (Except (Position, String)))
@@ -96,8 +96,8 @@ pass1FunDef :: (Abs.FunDef Position) -> Pass1M FunDef
 pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
     t' <- pass1Type t
     args' <- mapM pass1Arg args
-    let envModification = M.fromList (map (\(_, type_, ident) -> (ident, type_)) args')
     (oldVenv, depth) <- get
+    let envModification = M.fromList (map (\(_, type_, ident) -> (ident, (type_, depth))) args')
     let newVenv = M.union envModification oldVenv
     put (newVenv, depth + 1)
     body' <- pass1Block body
@@ -183,10 +183,11 @@ pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
 checkdecl :: Position -> Ident -> Type -> Pass1M ()
 checkdecl pos ident t = do
     (venv, depth)  <- get
-    if M.member ident venv
-        then throwError (pos, ident ++ " has already been declared")
-        else put (M.insert ident t venv, depth)
-
+    case M.lookup ident venv of
+        Nothing -> put (M.insert ident (t, depth) venv, depth)
+        Just (_, depth') -> if depth' < depth
+            then put (M.insert ident (t, depth) venv, depth)
+        else throwError (pos, ident ++ " has already been declared")
 pass1Item :: Type -> (Abs.Item Position) -> Pass1M Item
 pass1Item t (Abs.NoInit pos (Abs.Ident ident)) = do
     checkdecl pos ident t
@@ -230,7 +231,7 @@ typeOfLvalue (VarRef _ ident) = do
     (venv, _) <- get
     case M.lookup ident venv of
         Nothing -> undefined -- no such lvalue can be created
-        Just t -> return t
+        Just (t, _) -> return t
 typeOfLvalue (ClassAttr _ lval attrIdent) = do
     type_ <- typeOfLvalue lval
     case type_ of
@@ -499,7 +500,7 @@ typeOfExpr (EVar _ ident) = do
     (venv, _) <- get
     case M.lookup ident venv of
         Nothing -> undefined -- no such expr can be created
-        Just t -> return t
+        Just (t, _) -> return t
 typeOfExpr (ELitInt _ _) = return $ Int
 typeOfExpr (ELitBool _ _) = return $ Bool
 typeOfExpr (EString _ _) = return $ String_
