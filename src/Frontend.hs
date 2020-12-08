@@ -19,7 +19,16 @@ data Type
     | Void
     | Class Ident
     | Array Type
-    deriving (Show, Eq)
+    deriving Eq
+
+instance Show Type where
+    show Int = "integer"
+    show Bool = "boolean"
+    show String_ = "string"
+    show Void = "void"
+    show (Class ident) = ident
+    show (Array t) = show t ++ "[]"
+
 data Program = Program Position [ClassDef] [FunDef]
 data ClassDef = ClassDef Position Ident (Maybe Ident) [ClassBody]
 data ClassBody = AttrVar Position Type Ident | AttrFun Position FunDef
@@ -314,7 +323,7 @@ pass1Expr (Abs.EApp pos (Abs.Ident funIdent) args) = do
             argTypes' <- mapM typeOfExpr args'
             if argTypes == argTypes'
                 then return $ EApp pos funIdent args'
-                else throwError (pos, "incorrect types of arguments in call to function " ++ funIdent)
+                else throwError (pos, "incorrect types of arguments in call to function " ++ funIdent ++ ", expected " ++ show argTypes ++ ", got " ++ show argTypes')
 pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
     classExpr' <- pass1Expr classExpr
     classType <- typeOfExpr classExpr'
