@@ -6,6 +6,7 @@ import qualified Data.Map as M
 import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Reader
+import Debug.Trace
 
 import qualified Parsing.AbsLatte as Abs
 
@@ -141,7 +142,11 @@ pass1Stmt (Abs.Cond pos cond body) = do
     body' <- pass1Stmt body
     type_ <- typeOfExpr cond'
     case type_ of
-        Bool -> return $ Cond pos cond' body' Nothing
+        Bool -> do
+            case cond' of
+                ELitBool _ True -> return body'
+                ELitBool _ False -> return $ Empty pos
+                _ -> return $ Cond pos cond' body' Nothing
         _ -> throwError (pos, "condition in if statement must be boolean")
 pass1Stmt (Abs.CondElse pos cond bodyIf bodyElse) = do
     cond' <- pass1Expr cond
@@ -149,14 +154,21 @@ pass1Stmt (Abs.CondElse pos cond bodyIf bodyElse) = do
     bodyElse' <- pass1Stmt bodyElse
     type_ <- typeOfExpr cond'
     case type_ of
-        Bool -> return $ Cond pos cond' bodyIf' (Just bodyElse')
+        Bool -> do
+            case cond' of
+                ELitBool _ True -> return bodyIf'
+                ELitBool _ False -> return bodyElse'
+                _ -> return $ Cond pos cond' bodyIf' (Just bodyElse')
         _ -> throwError (pos, "condition in if statement must be boolean")
 pass1Stmt (Abs.While pos cond body) = do
     cond' <- pass1Expr cond
     body' <- pass1Stmt body
     type_ <- typeOfExpr cond'
     case type_ of
-        Bool -> return $ While pos cond' body'
+        Bool -> do
+            case cond' of
+                ELitBool _ False -> return $ Empty pos
+                _ -> return $ While pos cond' body'
         _ -> throwError (pos, "condition in while statement must be boolean")
 pass1Stmt (Abs.SExp pos expr) = SExp pos <$> pass1Expr expr
 pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
@@ -353,7 +365,7 @@ pass1Expr (Abs.Not pos expr) = do
     expr' <- pass1Expr expr
     t <- typeOfExpr expr'
     case t of
-        Bool -> return $ Neg pos expr'
+        Bool -> return $ Not pos expr'
         _ -> throwError (pos, "type mismatch - cannot perform boolean negation on non-boolean expressions")
 pass1Expr (Abs.EMul pos e1 mulop e2) =
     let
@@ -361,6 +373,9 @@ pass1Expr (Abs.EMul pos e1 mulop e2) =
         getPosMul (Abs.Times p) = p
         getPosMul (Abs.Div p) = p
         getPosMul (Abs.Mod p) = p
+        checkIf0 :: Expr -> String -> Pass1M ()
+        checkIf0 (ELitInt _ 0) name = throwError (pos, name ++ " by zero")
+        checkIf0 _ _ = return ()
     in do
     e1' <- pass1Expr e1
     typee1 <- typeOfExpr e1'
@@ -375,8 +390,8 @@ pass1Expr (Abs.EMul pos e1 mulop e2) =
             }
             case mulop of
                 Abs.Times _ -> createEMul (*) Mul
-                Abs.Div _ -> createEMul div Div
-                Abs.Mod _ -> createEMul mod Mod
+                Abs.Div _ -> checkIf0 e2' "division" *> createEMul div Div
+                Abs.Mod _ -> checkIf0 e2' "modulo" *> createEMul mod Mod
         _ -> throwError (getPosMul mulop, "type mismatch - both operands should be integers")
 pass1Expr (Abs.EAdd pos e1 addop e2) =
     let
@@ -576,7 +591,7 @@ pass1 (Abs.Program p tlds) =
         fenv <- foldM helper initialFenv tlds
         let (mainPos, fundefs) = foldl helper2 (Nothing, []) tlds
         case M.lookup "main" fenv of
-            Nothing -> throwError (p, "no main function specified)")
+            Nothing -> throwError (p, "no main function specified")
             Just (retType, argTypes) -> do
                 if retType /= Int || argTypes /= []
                     then throwError (mainPos, "Incorrect type of main function: its signature should be `int main()`")
