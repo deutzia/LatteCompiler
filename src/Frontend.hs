@@ -48,27 +48,28 @@ data Stmt
     | SExp Position Expr
     | For Position Ident Expr Stmt
 data Item = Item Position Ident (Maybe Expr)
+-- position and type are kept for every nonobvious expression and lvalue
 data Expr
-    = ENewArr Position Type Expr
+    = ENewArr Type Position Type Expr
     | ENewObj Position Type
-    | EVar Position Ident
+    | EVar Type Position Ident
     | ELitInt Position Integer
     | ELitBool Position Bool
     | EString Position String
     | ECoerce Position Type Expr
-    | EApp Position Ident [Expr]
-    | EClassMethod Position Expr Ident [Expr]
-    | EClassField Position Expr Ident
-    | EArrAt Position Expr Expr
+    | EApp Type Position Ident [Expr]
+    | EClassMethod Type Position Expr Ident [Expr]
+    | EClassField Type Position Expr Ident
+    | EArrAt Type Position Expr Expr
     | Neg Position Expr
     | Not Position Expr
-    | EIntOp Position Expr IntOp Expr
+    | EIntOp Type Position Expr IntOp Expr
     | ERel Position Expr IntRel Expr
     | EBoolOp Position Expr BoolOp Expr
 data Lvalue
-    = VarRef Position Ident
-    | ClassAttr Position Lvalue Ident
-    | ArrRef Position Lvalue Expr
+    = VarRef Type Position Ident
+    | ClassAttr Type Position Lvalue Ident
+    | ArrRef Type Position Lvalue Expr
 
 data IntOp = Mul | Div | Add | Sub | Mod
 data IntRel = Lth | Le | Gth | Ge | Equ | Neq
@@ -137,11 +138,9 @@ pass1Stmt (Abs.Decl pos t items) = do
 pass1Stmt (Abs.Ass pos e1 e2) = do
     lval <- pass1Expr e1 >>= getLvalue
     expr <- pass1Expr e2
-    lvalT <- typeOfLvalue lval
-    exprT <- typeOfExpr expr
-    if lvalT == exprT
+    if typeOfLvalue lval == typeOfExpr expr
         then return $ Ass pos lval expr
-        else throwError (pos, "cannot assign expression of type " ++ show exprT ++ " to variable of type " ++ show lvalT)
+        else throwError (pos, "cannot assign expression of type " ++ show (typeOfExpr expr) ++ " to variable of type " ++ show (typeOfLvalue lval))
 pass1Stmt (Abs.Incr pos expr) = Incr pos <$> (pass1Expr expr >>= getLvalue)
 pass1Stmt (Abs.Decr pos expr) = Decr pos <$> (pass1Expr expr >>= getLvalue)
 pass1Stmt (Abs.Ret pos expr) = Ret pos <$> (Just <$> pass1Expr expr)
@@ -149,8 +148,7 @@ pass1Stmt (Abs.VRet pos) = return $ Ret pos Nothing
 pass1Stmt (Abs.Cond pos cond body) = do
     cond' <- pass1Expr cond
     body' <- pass1Stmt body
-    type_ <- typeOfExpr cond'
-    case type_ of
+    case typeOfExpr cond' of
         Bool -> do
             case cond' of
                 ELitBool _ True -> return body'
@@ -161,8 +159,7 @@ pass1Stmt (Abs.CondElse pos cond bodyIf bodyElse) = do
     cond' <- pass1Expr cond
     bodyIf' <- pass1Stmt bodyIf
     bodyElse' <- pass1Stmt bodyElse
-    type_ <- typeOfExpr cond'
-    case type_ of
+    case typeOfExpr cond' of
         Bool -> do
             case cond' of
                 ELitBool _ True -> return bodyIf'
@@ -172,8 +169,7 @@ pass1Stmt (Abs.CondElse pos cond bodyIf bodyElse) = do
 pass1Stmt (Abs.While pos cond body) = do
     cond' <- pass1Expr cond
     body' <- pass1Stmt body
-    type_ <- typeOfExpr cond'
-    case type_ of
+    case typeOfExpr cond' of
         Bool -> do
             case cond' of
                 ELitBool _ False -> return $ Empty pos
@@ -186,8 +182,7 @@ pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
     in do
     t' <- pass1Type t
     iter' <- pass1Expr iterable
-    type_ <- typeOfExpr iter'
-    case type_ of
+    case typeOfExpr iter' of
         Array iterType -> if t' == iterType
             then do
                 (oldVenv, depth) <- get
@@ -218,9 +213,8 @@ pass1Item t (Abs.NoInit pos (Abs.Ident ident)) = do
     return $ Item pos ident Nothing
 pass1Item t (Abs.Init pos (Abs.Ident ident) expr) = do
     expr' <- pass1Expr expr
-    type_ <- typeOfExpr expr'
-    if t /= type_
-        then throwError (pos, "Cannot assign value of type " ++ show type_ ++ " to variable of type " ++ show t)
+    if t /= typeOfExpr expr'
+        then throwError (pos, "Cannot assign value of type " ++ show (typeOfExpr expr') ++ " to variable of type " ++ show t)
         else do
             checkdecl pos ident t
             return $ Item pos ident $ Just expr'
@@ -232,70 +226,49 @@ noAttribute :: Position -> String -> Pass1M a
 noAttribute p s = throwError (p, "type " ++ s ++ " doesn't have attributes")
 
 getLvalue :: Expr -> Pass1M Lvalue
-getLvalue (ENewArr pos _ _) = notLvalue pos "array declaration"
+getLvalue (ENewArr _ pos _ _) = notLvalue pos "array declaration"
 getLvalue (ENewObj pos _ ) = notLvalue pos "object declaration"
-getLvalue (EVar pos ident) = return $ VarRef pos ident
+getLvalue (EVar t pos ident) = return $ VarRef t pos ident
 getLvalue (ELitInt pos _) = notLvalue pos "integer literal"
 getLvalue (ELitBool pos _) = notLvalue pos "boolean literal"
 getLvalue (EString pos _) = notLvalue pos "string literal"
 getLvalue (ECoerce pos _ _) = notLvalue pos "coercion expression"
-getLvalue (EApp pos _ _) = notLvalue pos "function application"
-getLvalue (EClassMethod pos _ _ _) = notLvalue pos "method aplication"
-getLvalue (EClassField pos expr ident) = do
+getLvalue (EApp _ pos _ _) = notLvalue pos "function application"
+getLvalue (EClassMethod _ pos _ _ _) = notLvalue pos "method aplication"
+getLvalue (EClassField t pos expr ident) = do
     class_ <- getLvalue expr
     -- we don't have to check here whether such attribute exists, because creating Expr did that check already
-    typeOfClass <- typeOfLvalue class_
-    case typeOfClass of
-        Class _ -> return $ ClassAttr pos class_ ident
+    case typeOfLvalue class_ of
+        Class _ -> return $ ClassAttr t pos class_ ident
         Array _ -> throwError (pos, "cannot use array length as lvalue")
         _ -> undefined
-getLvalue (EArrAt pos e1 e2) = do
+getLvalue (EArrAt t pos e1 e2) = do
     arr <- getLvalue e1
-    return $ ArrRef pos arr e2
+    return $ ArrRef t pos arr e2
 getLvalue (Neg pos _) = notLvalue pos "integer negation"
 getLvalue (Not pos _) = notLvalue pos "logical negation"
-getLvalue (EIntOp pos _ _ _) = notLvalue pos "operation on integers"
+getLvalue (EIntOp _ pos _ _ _) = notLvalue pos "binary operation"
 getLvalue (ERel pos _ _ _) = notLvalue pos "relation on integers"
 getLvalue (EBoolOp pos _ _ _) = notLvalue pos "operation on booleans"
 
-typeOfLvalue :: Lvalue -> Pass1M Type
-typeOfLvalue (VarRef _ ident) = do
-    (venv, _) <- get
-    case M.lookup ident venv of
-        Nothing -> undefined -- no such lvalue can be created
-        Just (t, _) -> return t
-typeOfLvalue (ClassAttr _ lval attrIdent) = do
-    type_ <- typeOfLvalue lval
-    case type_ of
-        Class classIdent -> do
-            (_, cenv) <- ask
-            case M.lookup classIdent cenv of
-                Nothing -> undefined -- no such lvalue can be created
-                Just (attrs, _) -> do
-                    case M.lookup attrIdent attrs of
-                        Nothing -> undefined -- no such lvalue can be created
-                        Just t -> return t
-        _ -> undefined -- no such lvalue can be created
-typeOfLvalue (ArrRef _ lval _) = do
-    type_ <- typeOfLvalue lval
-    case type_ of
-        Array t -> return t
-        _ -> undefined
+typeOfLvalue :: Lvalue -> Type
+typeOfLvalue (VarRef t _ _) = t
+typeOfLvalue (ClassAttr t _ _ _) = t
+typeOfLvalue (ArrRef t _ _ _) = t
 
 pass1Expr :: (Abs.Expr Position) -> Pass1M Expr
 pass1Expr (Abs.ENewArr pos t e) = do
     t' <- pass1Type t
     e' <- pass1Expr e
-    typeE <- typeOfExpr e'
-    case typeE of
-        Int -> return $ ENewArr pos t' e'
+    case typeOfExpr e' of
+        Int -> return $ ENewArr (Array t') pos t' e'
         _ -> throwError (pos, "array size has to be an integer")
 pass1Expr (Abs.ENewObj pos t) = ENewObj pos <$> pass1Type t
 pass1Expr (Abs.EVar pos (Abs.Ident ident)) = do
     (venv, _) <- get
     case M.lookup ident venv of
         Nothing -> throwError (pos, "undeclared identifier " ++ ident)
-        Just _ -> return $ EVar pos ident
+        Just (t, _) -> return $ EVar t pos ident
 pass1Expr (Abs.ELitInt pos n) = return $ ELitInt pos n
 pass1Expr (Abs.ELitTrue pos) = return $ ELitBool pos True
 pass1Expr (Abs.ELitFalse pos) = return $ ELitBool pos False
@@ -328,16 +301,15 @@ pass1Expr (Abs.EApp pos (Abs.Ident funIdent) args) = do
     (fenv, _) <- ask
     case M.lookup funIdent fenv of
         Nothing -> throwError (pos, "unknown function identifier")
-        Just (_, argTypes) -> do
+        Just (retType, argTypes) -> do
             args' <- mapM pass1Expr args
-            argTypes' <- mapM typeOfExpr args'
+            let argTypes' = map typeOfExpr args'
             if argTypes == argTypes'
-                then return $ EApp pos funIdent args'
+                then return $ EApp retType pos funIdent args'
                 else throwError (pos, "incorrect types of arguments in call to function " ++ funIdent ++ ", expected " ++ show argTypes ++ ", got " ++ show argTypes')
 pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
     classExpr' <- pass1Expr classExpr
-    classType <- typeOfExpr classExpr'
-    case classType of
+    case typeOfExpr classExpr' of
         Class classIdent -> do
             (_, cenv) <- ask
             case M.lookup classIdent cenv of
@@ -345,17 +317,16 @@ pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
                 Just (_, methods) -> do
                     case M.lookup methodIdent methods of
                         Nothing -> throwError (pos, "class " ++ classIdent ++ " has no method " ++ methodIdent)
-                        Just (_, argTypes) -> do
+                        Just (retType, argTypes) -> do
                             args' <- mapM pass1Expr args
-                            argTypes' <- mapM typeOfExpr args'
+                            let argTypes' = map typeOfExpr args'
                             if argTypes == argTypes'
-                                then return $ EClassMethod pos classExpr' methodIdent args'
-                                else throwError (pos, "incorrect types of arguments in call to method " ++ classIdent ++ "." ++ methodIdent)
+                                then return $ EClassMethod retType pos classExpr' methodIdent args'
+                                else throwError (pos, "incorrect types of arguments in call to method " ++ classIdent ++ "." ++ methodIdent ++ ", expected " ++ show argTypes ++ ", got " ++ show argTypes')
         _ -> throwError (pos, "calling method on non-class type is forbidden")
 pass1Expr (Abs.EClassField pos classExpr (Abs.Ident fieldIdent)) = do
     classExpr' <- pass1Expr classExpr
-    classType <- typeOfExpr classExpr'
-    case classType of
+    case typeOfExpr classExpr' of
         Class classIdent -> do
             (_, cenv) <- ask
             case M.lookup classIdent cenv of
@@ -363,33 +334,29 @@ pass1Expr (Abs.EClassField pos classExpr (Abs.Ident fieldIdent)) = do
                 Just (fields, _) -> do
                     case M.lookup fieldIdent fields of
                         Nothing -> throwError (pos, "class " ++ classIdent ++ " has no field " ++ fieldIdent)
-                        Just _ -> do
-                            return $ EClassField pos classExpr' fieldIdent
+                        Just fieldType -> do
+                            return $ EClassField fieldType pos classExpr' fieldIdent
         Array _ -> if fieldIdent /= "length"
             then throwError (pos, "array has no member " ++ fieldIdent ++ ", oly length")
-            else return $ EClassField pos classExpr' fieldIdent
-        _ -> throwError (pos, "accessing members on non-class type " ++ show classType ++ " is forbidden")
+            else return $ EClassField Int pos classExpr' fieldIdent
+        _ -> throwError (pos, "accessing members on non-class type " ++ show (typeOfExpr classExpr') ++ " is forbidden")
 pass1Expr (Abs.EArrAt pos arrExpr indexExp) = do
     arrExp' <- pass1Expr arrExpr
-    arrType <- typeOfExpr arrExp'
     indexExp' <- pass1Expr indexExp
-    indexType <- typeOfExpr indexExp'
-    case indexType of
+    case typeOfExpr indexExp' of
         Int -> do
-            case arrType of
-                Array _ -> return $ EArrAt pos arrExp' indexExp'
+            case typeOfExpr arrExp' of
+                Array t -> return $ EArrAt t pos arrExp' indexExp'
                 _ -> throwError (pos, "cannot index non-array type")
         _ -> throwError (pos, "array index must be an integer")
 pass1Expr (Abs.Neg pos expr) = do
     expr' <- pass1Expr expr
-    t <- typeOfExpr expr'
-    case t of
+    case typeOfExpr expr' of
         Int -> return $ Neg pos expr'
         _ -> throwError (pos, "type mismatch - cannot perform integer negation on non-integer expressions")
 pass1Expr (Abs.Not pos expr) = do
     expr' <- pass1Expr expr
-    t <- typeOfExpr expr'
-    case t of
+    case typeOfExpr expr' of
         Bool -> return $ Not pos expr'
         _ -> throwError (pos, "type mismatch - cannot perform boolean negation on non-boolean expressions")
 pass1Expr (Abs.EMul pos e1 mulop e2) =
@@ -403,15 +370,13 @@ pass1Expr (Abs.EMul pos e1 mulop e2) =
         checkIf0 _ _ = return ()
     in do
     e1' <- pass1Expr e1
-    typee1 <- typeOfExpr e1'
     e2' <- pass1Expr e2
-    typee2 <- typeOfExpr e2'
-    case (typee1, typee2) of
+    case (typeOfExpr e1', typeOfExpr e2') of
         (Int, Int) -> do
             let createEMul f op = do {
                 case (e1', e2') of
                     (ELitInt _ n, ELitInt _ m) -> return $ ELitInt pos (f n m)
-                    _ -> return $ EIntOp pos e1' op e2'
+                    _ -> return $ EIntOp Int pos e1' op e2'
             }
             case mulop of
                 Abs.Times _ -> createEMul (*) Mul
@@ -425,15 +390,13 @@ pass1Expr (Abs.EAdd pos e1 addop e2) =
         getPosAdd (Abs.Minus p) = p
     in do
     e1' <- pass1Expr e1
-    typee1 <- typeOfExpr e1'
     e2' <- pass1Expr e2
-    typee2 <- typeOfExpr e2'
-    case (typee1, typee2) of
+    case (typeOfExpr e1', typeOfExpr e2') of
         (Int, Int) -> do
             let createEAdd f op = do {
                 case (e1', e2') of
                     (ELitInt _ n, ELitInt _ m) -> return $ ELitInt pos (f n m)
-                    _ -> return $ EIntOp pos e1' op e2'
+                    _ -> return $ EIntOp Int pos e1' op e2'
             }
             case addop of
                 Abs.Plus _ -> createEAdd (+) Add
@@ -444,7 +407,7 @@ pass1Expr (Abs.EAdd pos e1 addop e2) =
                 Abs.Plus _ -> do
                     case (e1', e2') of
                         (EString _ n, EString _ m) -> return $ EString pos (n ++ m)
-                        _ -> return $ EIntOp pos e1' Add e2'
+                        _ -> return $ EIntOp String_ pos e1' Add e2'
         _ -> throwError (getPosAdd addop, "type mismatch - both operands should be integers")
 pass1Expr (Abs.ERel pos e1 relop e2) =
     let
@@ -457,9 +420,9 @@ pass1Expr (Abs.ERel pos e1 relop e2) =
         getPosRel (Abs.NE p) = p
     in do
     e1' <- pass1Expr e1
-    typee1 <- typeOfExpr e1'
+    let typee1 = typeOfExpr e1'
     e2' <- pass1Expr e2
-    typee2 <- typeOfExpr e2'
+    let typee2 = typeOfExpr e2'
     let createERelInt f op = do {
         case (e1', e2') of
             (ELitInt _ n, ELitInt _ m) -> return $ ELitBool pos (f n m)
@@ -508,85 +471,44 @@ pass1Expr (Abs.ERel pos e1 relop e2) =
                 _ -> mismatchSameType
 pass1Expr (Abs.EAnd pos e1 e2) = do
     e1' <- pass1Expr e1
-    typee1 <- typeOfExpr e1'
     e2' <- pass1Expr e2
-    typee2 <- typeOfExpr e2'
     let createEBool f op = do {
         case (e1', e2') of
             (ELitBool _ n, ELitBool _ m) -> return $ ELitBool pos (f n m)
             _ -> return $ EBoolOp pos e1' op e2'
     }
-    case (typee1, typee2) of
+    case (typeOfExpr e1', typeOfExpr e2') of
         (Bool, Bool) -> createEBool (&&) And
         _ -> throwError (pos, "type mismatch - both operands should be booleans")
 pass1Expr (Abs.EOr pos e1 e2) = do
     e1' <- pass1Expr e1
-    typee1 <- typeOfExpr e1'
     e2' <- pass1Expr e2
-    typee2 <- typeOfExpr e2'
     let createEBool f op = do {
         case (e1', e2') of
             (ELitBool _ n, ELitBool _ m) -> return $ ELitBool pos (f n m)
             _ -> return $ EBoolOp pos e1' op e2'
     }
-    case (typee1, typee2) of
+    case (typeOfExpr e1', typeOfExpr e2') of
         (Bool, Bool) -> createEBool (||) Or
         _ -> throwError (pos, "type mismatch - both operands should be booleans")
 
-typeOfExpr :: Expr -> Pass1M Type
-typeOfExpr (ENewArr _ t _) = return $ Array t
-typeOfExpr (ENewObj _ t) = return t
-typeOfExpr (EVar _ ident) = do
-    (venv, _) <- get
-    case M.lookup ident venv of
-        Nothing -> undefined -- no such expr can be created
-        Just (t, _) -> return t
-typeOfExpr (ELitInt _ _) = return $ Int
-typeOfExpr (ELitBool _ _) = return $ Bool
-typeOfExpr (EString _ _) = return $ String_
-typeOfExpr (ECoerce _ t _) = return t
-typeOfExpr (EApp _ ident _) = do
-    (fenv, _) <- ask
-    case M.lookup ident fenv of
-        Nothing -> undefined
-        Just (t, _) -> return t
-typeOfExpr (EClassMethod _ e methodIdent _) = do
-    t <- typeOfExpr e
-    case t of
-        Class classIdent -> do
-            (_, cenv) <- ask
-            case M.lookup classIdent cenv of
-                Nothing -> undefined
-                Just (_, methods) -> do
-                    case M.lookup methodIdent methods of
-                        Nothing -> undefined
-                        Just (retT, _) -> return retT
-        _ -> undefined
-typeOfExpr (EClassField _ e fieldIdent) = do
-    t <- typeOfExpr e
-    case t of
-        Class classIdent -> do
-            (_, cenv) <- ask
-            case M.lookup classIdent cenv of
-                Nothing -> undefined
-                Just (fields, _) -> do
-                    case M.lookup fieldIdent fields of
-                        Nothing -> undefined
-                        Just retT -> return retT
-        -- the case of array.lenth
-        Array _ -> return Int
-        _ -> undefined
-typeOfExpr (EArrAt _ e _) = do
-    t <- typeOfExpr e
-    case t of
-        Array retT -> return retT
-        _ -> undefined
-typeOfExpr (Neg _ _ ) = return Int
-typeOfExpr (Not _ _) = return Bool
-typeOfExpr (EIntOp _ e Add _) = typeOfExpr e
-typeOfExpr (EIntOp _ _ _ _) = return Int
-typeOfExpr (ERel _ _ _ _) = return Bool
-typeOfExpr (EBoolOp _ _ _ _) = return Bool
+typeOfExpr :: Expr -> Type
+typeOfExpr (ENewArr t _ _ _) = t
+typeOfExpr (ENewObj _ t) = t
+typeOfExpr (EVar t _ _) = t
+typeOfExpr (ELitInt _ _) = Int
+typeOfExpr (ELitBool _ _) = Bool
+typeOfExpr (EString _ _) = String_
+typeOfExpr (ECoerce _ t _) = t
+typeOfExpr (EApp t _ _ _) = t
+typeOfExpr (EClassMethod t _ _ _ _) = t
+typeOfExpr (EClassField t _ _ _) = t
+typeOfExpr (EArrAt t _ _ _) = t
+typeOfExpr (Neg _ _ ) = Int
+typeOfExpr (Not _ _) = Bool
+typeOfExpr (EIntOp t _ _ _ _) = t
+typeOfExpr (ERel _ _ _ _) = Bool
+typeOfExpr (EBoolOp _ _ _ _) = Bool
 
 -- first pass through ast, frontend
 pass1 :: (Abs.Program Position) -> Pass1M Program
