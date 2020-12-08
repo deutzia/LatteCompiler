@@ -87,27 +87,27 @@ type Pass1M = ReaderT (Fenv, Cenv, Type) (StateT (Venv, Depth) (Except (Position
 -- this compiler is agressive and doesn't allow dead code, so the last
 -- statement has has to return (or be something that
 checkReturnBlock :: Block -> Bool
-checkReturnBlock (Block _ stmts) = if length stmts > 0 then checkReturnStmt (last stmts) else False
+checkReturnBlock (Block _ stmts) = not (null stmts) && checkReturnStmt (last stmts)
 
 checkReturnStmt :: Stmt -> Bool
 checkReturnStmt stmt =
     case stmt of
         Empty _ -> False
         BStmt _ block -> checkReturnBlock block
-        Decl _ _ _ -> False
-        Ass _ _ _ -> False
-        Incr _ _ -> False
-        Decr _ _ -> False
-        Ret _ _ -> True
+        Decl{} -> False
+        Ass{} -> False
+        Incr{} -> False
+        Decr{} -> False
+        Ret{} -> True
         Cond _ _ s1 (Just s2) -> checkReturnStmt s1 && checkReturnStmt s2
-        Cond _ _ _ _ -> False
+        Cond{} -> False
         -- allow using while (true) without return
         While _ (ELitBool _ True) _ -> True
-        While _ _ _ -> False
-        SExp _ _ -> False
-        For _ _ _ _ -> False
+        While{} -> False
+        SExp{} -> False
+        For{} -> False
 
-pass1BuiltinType :: (Abs.BuiltinType Position) -> Type
+pass1BuiltinType :: Abs.BuiltinType Position -> Type
 pass1BuiltinType (Abs.Int _) = Int
 pass1BuiltinType (Abs.Str _) = String_
 pass1BuiltinType (Abs.Bool _) = Bool
@@ -120,16 +120,16 @@ pass1ClassType ident pos = do
         then return (Array (Class ident))
         else throwError (pos, "Undeclared type: " ++ ident)
 
-pass1ArrayType :: (Abs.ArrayType Position) -> Pass1M Type
+pass1ArrayType :: Abs.ArrayType Position -> Pass1M Type
 pass1ArrayType (Abs.BuiltinArr _ type_) = return $ Array (pass1BuiltinType type_)
 pass1ArrayType (Abs.UserArr pos (Abs.Ident ident)) = pass1ClassType ident pos
 
-pass1Type :: (Abs.Type Position) -> Pass1M Type
+pass1Type :: Abs.Type Position -> Pass1M Type
 pass1Type (Abs.BltinType _ t) = return (pass1BuiltinType t)
 pass1Type (Abs.ArrType _ t) = pass1ArrayType t
 pass1Type (Abs.UserType pos (Abs.Ident ident)) = pass1ClassType ident pos
 
-pass1FunDef :: (Abs.FunDef Position) -> Pass1M FunDef
+pass1FunDef :: Abs.FunDef Position -> Pass1M FunDef
 pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
     t' <- pass1Type t
     args' <- mapM pass1Arg args
@@ -143,12 +143,12 @@ pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
         then return $ FunDef pos t' name args' body'
         else throwError (pos, "function returning non-void doesn't have return as a last instruction")
 
-pass1Arg :: (Abs.Arg Position) -> Pass1M Arg
+pass1Arg :: Abs.Arg Position -> Pass1M Arg
 pass1Arg (Abs.Arg pos t (Abs.Ident ident)) = do
     t' <- pass1Type t
     return (pos, t', ident)
 
-pass1Block :: (Abs.Block Position) -> Pass1M Block
+pass1Block :: Abs.Block Position -> Pass1M Block
 pass1Block (Abs.Block pos stmts) = do
     (oldVenv, depth) <- get
     put (oldVenv, depth + 1)
@@ -156,7 +156,7 @@ pass1Block (Abs.Block pos stmts) = do
     put (oldVenv, depth)
     return $ Block pos stmts'
 
-pass1Stmt :: (Abs.Stmt Position) -> Pass1M Stmt
+pass1Stmt :: Abs.Stmt Position -> Pass1M Stmt
 pass1Stmt (Abs.Empty pos) = return $ Empty pos
 pass1Stmt (Abs.BStmt pos block) = BStmt pos <$> pass1Block block
 pass1Stmt (Abs.Decl pos t items) = do
@@ -174,19 +174,19 @@ pass1Stmt (Abs.Decr pos expr) = Decr pos <$> (pass1Expr expr >>= getLvalue)
 pass1Stmt (Abs.Ret pos expr) = do
     expr' <- pass1Expr expr
     (_, _, retType) <- ask
-    if (typeOfExpr expr' /= retType)
+    if typeOfExpr expr' /= retType
         then throwError (pos, "cannot return something of type " ++ show (typeOfExpr expr') ++ " from a function returning " ++ show retType)
         else return $ Ret pos (Just expr')
 pass1Stmt (Abs.VRet pos) = do
     (_, _, retType) <- ask
-    if (retType /= Void)
+    if retType /= Void
         then throwError (pos, "cannot have empty return in function returning " ++ show retType)
         else return $ Ret pos Nothing
 pass1Stmt (Abs.Cond pos cond body) = do
     cond' <- pass1Expr cond
     body' <- pass1Stmt body
     case typeOfExpr cond' of
-        Bool -> do
+        Bool ->
             case cond' of
                 ELitBool _ True -> return body'
                 ELitBool _ False -> return $ Empty pos
@@ -197,7 +197,7 @@ pass1Stmt (Abs.CondElse pos cond bodyIf bodyElse) = do
     bodyIf' <- pass1Stmt bodyIf
     bodyElse' <- pass1Stmt bodyElse
     case typeOfExpr cond' of
-        Bool -> do
+        Bool ->
             case cond' of
                 ELitBool _ True -> return bodyIf'
                 ELitBool _ False -> return bodyElse'
@@ -207,7 +207,7 @@ pass1Stmt (Abs.While pos cond body) = do
     cond' <- pass1Expr cond
     body' <- pass1Stmt body
     case typeOfExpr cond' of
-        Bool -> do
+        Bool ->
             case cond' of
                 ELitBool _ False -> return $ Empty pos
                 _ -> return $ While pos cond' body'
@@ -244,7 +244,7 @@ checkdecl pos ident t = do
         Just (_, depth') -> if depth' < depth
             then put (M.insert ident (t, depth) venv, depth)
         else throwError (pos, ident ++ " has already been declared")
-pass1Item :: Type -> (Abs.Item Position) -> Pass1M Item
+pass1Item :: Type -> Abs.Item Position -> Pass1M Item
 pass1Item t (Abs.NoInit pos (Abs.Ident ident)) = do
     checkdecl pos ident t
     return $ Item pos ident Nothing
@@ -293,7 +293,7 @@ typeOfLvalue (VarRef t _ _) = t
 typeOfLvalue (ClassAttr t _ _ _) = t
 typeOfLvalue (ArrRef t _ _ _) = t
 
-pass1Expr :: (Abs.Expr Position) -> Pass1M Expr
+pass1Expr :: Abs.Expr Position -> Pass1M Expr
 pass1Expr (Abs.ENewArr pos t e) = do
     t' <- pass1Type t
     e' <- pass1Expr e
@@ -318,7 +318,7 @@ pass1Expr (Abs.EBasicArrCoerce pos t e) = do
     let t' = pass1BuiltinType t
     e' <- pass1Expr e
     return $ ECoerce pos (Array t') e'
-pass1Expr (Abs.EClassCoerce pos name e) = do
+pass1Expr (Abs.EClassCoerce pos name e) =
     case name of
         Abs.EVar _ (Abs.Ident className) -> do
             (_, cenv, _) <- ask
@@ -326,7 +326,7 @@ pass1Expr (Abs.EClassCoerce pos name e) = do
                 Nothing -> throwError (pos, "unknown type: " ++ className)
                 Just _ -> ECoerce pos (Class className) <$> pass1Expr e
         _ -> throwError (pos, "expression cannot be used as a type")
-pass1Expr (Abs.EClassArrCoerce pos name e) = do
+pass1Expr (Abs.EClassArrCoerce pos name e) =
     case name of
         Abs.EVar _ (Abs.Ident className) -> do
             (_, cenv, _) <- ask
@@ -351,7 +351,7 @@ pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
             (_, cenv, _) <- ask
             case M.lookup classIdent cenv of
                 Nothing -> throwError (pos, classIdent ++ " is not a correct class identifier")
-                Just (_, methods) -> do
+                Just (_, methods) ->
                     case M.lookup methodIdent methods of
                         Nothing -> throwError (pos, "class " ++ classIdent ++ " has no method " ++ methodIdent)
                         Just (retType, argTypes) -> do
@@ -368,10 +368,10 @@ pass1Expr (Abs.EClassField pos classExpr (Abs.Ident fieldIdent)) = do
             (_, cenv, _) <- ask
             case M.lookup classIdent cenv of
                 Nothing -> throwError (pos, classIdent ++ " is not a correct class identifier")
-                Just (fields, _) -> do
+                Just (fields, _) ->
                     case M.lookup fieldIdent fields of
                         Nothing -> throwError (pos, "class " ++ classIdent ++ " has no field " ++ fieldIdent)
-                        Just fieldType -> do
+                        Just fieldType ->
                             return $ EClassField fieldType pos classExpr' fieldIdent
         Array _ -> if fieldIdent /= "length"
             then throwError (pos, "array has no member " ++ fieldIdent ++ ", oly length")
@@ -381,7 +381,7 @@ pass1Expr (Abs.EArrAt pos arrExpr indexExp) = do
     arrExp' <- pass1Expr arrExpr
     indexExp' <- pass1Expr indexExp
     case typeOfExpr indexExp' of
-        Int -> do
+        Int ->
             case typeOfExpr arrExp' of
                 Array t -> return $ EArrAt t pos arrExp' indexExp'
                 _ -> throwError (pos, "cannot index non-array type")
@@ -438,7 +438,7 @@ pass1Expr (Abs.EAdd pos e1 addop e2) =
             case addop of
                 Abs.Plus _ -> createEAdd (+) Add
                 Abs.Minus _ -> createEAdd (-) Sub
-        (String_, String_) -> do
+        (String_, String_) ->
             case addop of
                 Abs.Minus _ ->  throwError (getPosAdd addop, "type mismatch - both operands should be integers")
                 Abs.Plus _ -> do
@@ -478,55 +478,48 @@ pass1Expr (Abs.ERel pos e1 relop e2) =
     let mismatchIntegers = throwError (getPosRel relop, "type mismatch - both operands should be integers")
     let mismatchSameType = throwError (getPosRel relop, "type mismatch - both operands should be of the same type")
     case relop of
-        Abs.LTH _ -> do
+        Abs.LTH _ ->
             case (typee1, typee2) of
                 (Int, Int) -> createERelInt (<) Lth
                 _ -> mismatchIntegers
-        Abs.LE _ -> do
+        Abs.LE _ ->
             case (typee1, typee2) of
                 (Int, Int) -> createERelInt (<=) Lth
                 _ -> mismatchIntegers
-        Abs.GTH _ -> do
+        Abs.GTH _ ->
             case (typee1, typee2) of
                 (Int, Int) -> createERelInt (>) Lth
                 _ -> mismatchIntegers
-        Abs.GE _ -> do
+        Abs.GE _ ->
             case (typee1, typee2) of
                 (Int, Int) -> createERelInt (>=) Lth
                 _ -> mismatchIntegers
-        Abs.EQU _ -> do
+        Abs.EQU _ ->
             case (typee1, typee2) of
                 (Int, Int) -> createERelInt (==) Equ
                 (String_, String_) -> createERelString (==) Equ
                 (Bool, Bool) -> createERelBool (==) Equ
                 _ -> mismatchSameType
-        Abs.NE _ -> do
+        Abs.NE _ ->
             case (typee1, typee2) of
                 (Int, Int) -> createERelInt (/=) Equ
                 (String_, String_) -> createERelString (/=) Equ
                 (Bool, Bool) -> createERelBool (/=) Equ
                 _ -> mismatchSameType
-pass1Expr (Abs.EAnd pos e1 e2) = do
+pass1Expr (Abs.EAnd pos e1 e2) = createBoolOp pos e1 e2 (&&) And
+pass1Expr (Abs.EOr pos e1 e2) = createBoolOp pos e1 e2 (||) Or
+
+createBoolOp :: Position -> Abs.Expr Position -> Abs.Expr Position -> (Bool -> Bool -> Bool) -> BoolOp -> Pass1M Expr
+createBoolOp pos e1 e2 f op = do
     e1' <- pass1Expr e1
     e2' <- pass1Expr e2
-    let createEBool f op = do {
+    let createEBool = do {
         case (e1', e2') of
             (ELitBool _ n, ELitBool _ m) -> return $ ELitBool pos (f n m)
             _ -> return $ EBoolOp pos e1' op e2'
     }
     case (typeOfExpr e1', typeOfExpr e2') of
-        (Bool, Bool) -> createEBool (&&) And
-        _ -> throwError (pos, "type mismatch - both operands should be booleans")
-pass1Expr (Abs.EOr pos e1 e2) = do
-    e1' <- pass1Expr e1
-    e2' <- pass1Expr e2
-    let createEBool f op = do {
-        case (e1', e2') of
-            (ELitBool _ n, ELitBool _ m) -> return $ ELitBool pos (f n m)
-            _ -> return $ EBoolOp pos e1' op e2'
-    }
-    case (typeOfExpr e1', typeOfExpr e2') of
-        (Bool, Bool) -> createEBool (||) Or
+        (Bool, Bool) -> createEBool
         _ -> throwError (pos, "type mismatch - both operands should be booleans")
 
 typeOfExpr :: Expr -> Type
@@ -544,11 +537,11 @@ typeOfExpr (EArrAt t _ _ _) = t
 typeOfExpr (Neg _ _ ) = Int
 typeOfExpr (Not _ _) = Bool
 typeOfExpr (EIntOp t _ _ _ _) = t
-typeOfExpr (ERel _ _ _ _) = Bool
-typeOfExpr (EBoolOp _ _ _ _) = Bool
+typeOfExpr ERel{} = Bool
+typeOfExpr EBoolOp{} = Bool
 
 -- first pass through ast, frontend
-pass1 :: (Abs.Program Position) -> Pass1M Program
+pass1 :: Abs.Program Position -> Pass1M Program
 pass1 (Abs.Program p tlds) =
     let
         initialFenv = M.fromList
@@ -565,23 +558,22 @@ pass1 (Abs.Program p tlds) =
             case M.lookup ident fdefs of
                 Nothing -> return $ M.insert ident (t', args') fdefs
                 Just _ -> throwError (pos, "function " ++ ident ++ " defined twice")
-        helper fdefs (Abs.ClassDef _ _ _) = return fdefs
-        helper fdefs (Abs.ClassExtDef _ _ _ _) = return fdefs
+        helper fdefs Abs.ClassDef{} = return fdefs
+        helper fdefs Abs.ClassExtDef{} = return fdefs
         helper2 (pos, acc) (Abs.FnDef _ fundef@(Abs.FunDef currentPos _ (Abs.Ident name) _ _)) =
             if name == "main"
                 then (currentPos, fundef : acc)
                 else (pos, fundef : acc)
-        helper2 acc (Abs.ClassDef _ _ _) = acc
-        helper2 acc (Abs.ClassExtDef _ _ _ _) = acc
+        helper2 acc Abs.ClassDef{} = acc
+        helper2 acc Abs.ClassExtDef{} = acc
     in do
         fenv <- foldM helper initialFenv tlds
         let (mainPos, fundefs) = foldl helper2 (Nothing, []) tlds
         case M.lookup "main" fenv of
             Nothing -> throwError (p, "no main function specified")
-            Just (retType, argTypes) -> do
-                if retType /= Int || argTypes /= []
-                    then throwError (mainPos, "Incorrect type of main function: its signature should be `int main()`")
-                    else return ()
-        fundefs' <- local (\_ -> (fenv, M.empty, Void)) (mapM pass1FunDef fundefs)
+            Just (retType, argTypes) ->
+                when (retType /= Int || argTypes /= [])
+                    (throwError (mainPos, "Incorrect type of main function: its signature should be `int main()`"))
+        fundefs' <- local (const (fenv, M.empty, Void)) (mapM pass1FunDef fundefs)
         return $ Program p [] fundefs'
 
