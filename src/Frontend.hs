@@ -186,11 +186,15 @@ pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
     in do
     t' <- pass1Type t
     iter' <- pass1Expr iterable
-    body' <- pass1Stmt body
     type_ <- typeOfExpr iter'
     case type_ of
         Array iterType -> if t' == iterType
-            then return (For pos ident iter' body')
+            then do
+                (oldVenv, depth) <- get
+                put (M.insert ident (iterType, depth) oldVenv, depth + 1)
+                body' <- pass1Stmt body
+                put (oldVenv, depth)
+                return (For pos ident iter' body')
             else throwError (pos, "type mismatch in for: can't iterate over array of " ++ show iterType ++ " with variable of type " ++ show t')
         Int -> notIterable
         Bool -> notIterable
@@ -240,7 +244,11 @@ getLvalue (EClassMethod pos _ _ _) = notLvalue pos "method aplication"
 getLvalue (EClassField pos expr ident) = do
     class_ <- getLvalue expr
     -- we don't have to check here whether such attribute exists, because creating Expr did that check already
-    return $ ClassAttr pos class_ ident
+    typeOfClass <- typeOfLvalue class_
+    case typeOfClass of
+        Class _ -> return $ ClassAttr pos class_ ident
+        Array _ -> throwError (pos, "cannot use array length as lvalue")
+        _ -> undefined
 getLvalue (EArrAt pos e1 e2) = do
     arr <- getLvalue e1
     return $ ArrRef pos arr e2
@@ -270,7 +278,9 @@ typeOfLvalue (ClassAttr _ lval attrIdent) = do
         _ -> undefined -- no such lvalue can be created
 typeOfLvalue (ArrRef _ lval _) = do
     type_ <- typeOfLvalue lval
-    return $ Array type_
+    case type_ of
+        Array t -> return t
+        _ -> undefined
 
 pass1Expr :: (Abs.Expr Position) -> Pass1M Expr
 pass1Expr (Abs.ENewArr pos t e) = do
@@ -355,7 +365,10 @@ pass1Expr (Abs.EClassField pos classExpr (Abs.Ident fieldIdent)) = do
                         Nothing -> throwError (pos, "class " ++ classIdent ++ " has no field " ++ fieldIdent)
                         Just _ -> do
                             return $ EClassField pos classExpr' fieldIdent
-        _ -> throwError (pos, "calling method on non-class type is forbidden")
+        Array _ -> if fieldIdent /= "length"
+            then throwError (pos, "array has no member " ++ fieldIdent ++ ", oly length")
+            else return $ EClassField pos classExpr' fieldIdent
+        _ -> throwError (pos, "accessing members on non-class type " ++ show classType ++ " is forbidden")
 pass1Expr (Abs.EArrAt pos arrExpr indexExp) = do
     arrExp' <- pass1Expr arrExpr
     arrType <- typeOfExpr arrExp'
@@ -560,6 +573,8 @@ typeOfExpr (EClassField _ e fieldIdent) = do
                     case M.lookup fieldIdent fields of
                         Nothing -> undefined
                         Just retT -> return retT
+        -- the case of array.lenth
+        Array _ -> return Int
         _ -> undefined
 typeOfExpr (EArrAt _ e _) = do
     t <- typeOfExpr e
