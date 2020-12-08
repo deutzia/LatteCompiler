@@ -191,7 +191,6 @@ pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
 
 
 -- throw an error if we can't declare a particular variable
--- TODO enable shadowing HERE
 checkdecl :: Position -> Ident -> Type -> Pass1M ()
 checkdecl pos ident t = do
     (venv, depth)  <- get
@@ -206,8 +205,12 @@ pass1Item t (Abs.NoInit pos (Abs.Ident ident)) = do
     return $ Item pos ident Nothing
 pass1Item t (Abs.Init pos (Abs.Ident ident) expr) = do
     expr' <- pass1Expr expr
-    checkdecl pos ident t
-    return $ Item pos ident $ Just expr'
+    type_ <- typeOfExpr expr'
+    if t /= type_
+        then throwError (pos, "Cannot assign value of type " ++ show type_ ++ " to variable of type " ++ show t)
+        else do
+            checkdecl pos ident t
+            return $ Item pos ident $ Just expr'
 
 notLvalue :: Position -> String -> Pass1M a
 notLvalue p s = throwError (p, s ++ " cannot be used as lvalue")
