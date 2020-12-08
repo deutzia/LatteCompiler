@@ -6,6 +6,7 @@ import qualified Data.Map as M
 import System.Environment
 import System.IO
 import System.FilePath.Posix
+import System.Exit
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Except
@@ -18,6 +19,14 @@ import Frontend
 fileToS :: FilePath -> FilePath
 fileToS fileName = dropExtension fileName ++ ".s"
 
+printErrorAndExit :: (Position, String) -> IO a
+printErrorAndExit (Just (row, col), err) = do
+    hPutStrLn stderr $ "ERROR\nstatic anaylsis error at line " ++ show row ++ ", column " ++ show col ++ ": " ++ err
+    exitFailure
+printErrorAndExit (Nothing, err) = do
+    hPutStrLn stderr $ "ERROR\n" ++ err
+    exitFailure
+
 runFullCompile :: String -> IO ()
 runFullCompile filename = do
     code <- readFile filename
@@ -26,10 +35,9 @@ runFullCompile filename = do
             let outFilename = fileToS
             let pass1Result = runExcept (evalStateT (runReaderT (pass1 program) (M.empty, M.empty, Void)) (M.empty, 0))
             case pass1Result of
-                Left (Just (col, row), err) -> hPutStrLn stderr $ "Error at column " ++ show col ++ " row " ++ show row ++ ": " ++ err
-                Left (Nothing, err) -> hPutStrLn stderr $ "Error at unknown location: " ++ err
-                Right (Program pos _ _) ->  putStrLn $ "Ok " ++ show pos
-        Bad e -> hPutStrLn stderr e
+                Left err -> printErrorAndExit err
+                Right (Program _ _ _) ->  hPutStrLn stderr $ "OK"
+        Bad e -> printErrorAndExit (Nothing, e)
 
 main :: IO ()
 main = do
