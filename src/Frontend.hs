@@ -29,12 +29,12 @@ instance Show Type where
     show (Class ident) = ident
     show (Array t) = show t ++ "[]"
 
-data Program = Program Position [ClassDef] [FunDef]
-data ClassDef = ClassDef Position Ident (Maybe Ident) [ClassBody]
-data ClassBody = AttrVar Position Type Ident | AttrFun Position FunDef
-data FunDef = FunDef Position Type Ident [Arg] Block
+data Program = Program Position [ClassDef] [FunDef] deriving Show
+data ClassDef = ClassDef Position Ident (Maybe Ident) [ClassBody] deriving Show
+data ClassBody = AttrVar Position Type Ident | AttrFun Position FunDef deriving Show
+data FunDef = FunDef Position Type Ident [Arg] Block deriving Show
 type Arg = (Position, Type, Ident)
-data Block = Block Position [Stmt]
+data Block = Block Position [Stmt] deriving Show
 data Stmt
     = Empty Position
     | BStmt Position Block
@@ -47,7 +47,8 @@ data Stmt
     | While Position Expr Stmt
     | SExp Position Expr
     | For Position Ident Expr Stmt
-data Item = Item Position Ident (Maybe Expr)
+    deriving Show
+data Item = Item Position Ident (Maybe Expr) deriving Show
 -- position and type are kept for every nonobvious expression and lvalue
 data Expr
     = ENewArr Type Position Type Expr
@@ -66,20 +67,45 @@ data Expr
     | EIntOp Type Position Expr IntOp Expr
     | ERel Position Expr IntRel Expr
     | EBoolOp Position Expr BoolOp Expr
+    deriving Show
 data Lvalue
     = VarRef Type Position Ident
     | ClassAttr Type Position Lvalue Ident
     | ArrRef Type Position Lvalue Expr
+    deriving Show
 
-data IntOp = Mul | Div | Add | Sub | Mod
-data IntRel = Lth | Le | Gth | Ge | Equ | Neq
-data BoolOp = Or | And
+data IntOp = Mul | Div | Add | Sub | Mod deriving Show
+data IntRel = Lth | Le | Gth | Ge | Equ | Neq deriving Show
+data BoolOp = Or | And deriving Show
 
 type Depth = Integer
 type Venv = M.Map Ident (Type, Depth) -- variable env
 type Fenv = M.Map Ident (Type, [Type]) -- function env
 type Cenv = M.Map Ident (M.Map Ident Type, M.Map Ident (Type, [Type])) -- classes env
-type Pass1M = ReaderT (Fenv, Cenv) (StateT (Venv, Depth) (Except (Position, String)))
+type Pass1M = ReaderT (Fenv, Cenv, Type) (StateT (Venv, Depth) (Except (Position, String)))
+
+-- this compiler is agressive and doesn't allow dead code, so the last
+-- statement has has to return (or be something that
+checkReturnBlock :: Block -> Bool
+checkReturnBlock (Block _ stmts) = if length stmts > 0 then checkReturnStmt (last stmts) else False
+
+checkReturnStmt :: Stmt -> Bool
+checkReturnStmt stmt =
+    case stmt of
+        Empty _ -> False
+        BStmt _ block -> checkReturnBlock block
+        Decl _ _ _ -> False
+        Ass _ _ _ -> False
+        Incr _ _ -> False
+        Decr _ _ -> False
+        Ret _ _ -> True
+        Cond _ _ s1 (Just s2) -> checkReturnStmt s1 && checkReturnStmt s2
+        Cond _ _ _ _ -> False
+        -- allow using while (true) without return
+        While _ (ELitBool _ True) _ -> True
+        While _ _ _ -> False
+        SExp _ _ -> False
+        For _ _ _ _ -> False
 
 pass1BuiltinType :: (Abs.BuiltinType Position) -> Type
 pass1BuiltinType (Abs.Int _) = Int
@@ -89,7 +115,7 @@ pass1BuiltinType (Abs.Void _) = Void
 
 pass1ClassType :: String -> Position -> Pass1M Type
 pass1ClassType ident pos = do
-    (_, cenv) <- ask
+    (_, cenv, _) <- ask
     if M.member ident cenv
         then return (Array (Class ident))
         else throwError (pos, "Undeclared type: " ++ ident)
@@ -111,9 +137,11 @@ pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
     let envModification = M.fromList (map (\(_, type_, ident) -> (ident, (type_, depth))) args')
     let newVenv = M.union envModification oldVenv
     put (newVenv, depth + 1)
-    body' <- pass1Block body
+    body' <- local (\(fenv, cenv, _) -> (fenv, cenv, t')) (pass1Block body)
     put (oldVenv, depth)
-    return $ FunDef pos t' name args' body'
+    if checkReturnBlock body' || t' == Void
+        then return $ FunDef pos t' name args' body'
+        else throwError (pos, "function returning non-void doesn't have return as a last instruction")
 
 pass1Arg :: (Abs.Arg Position) -> Pass1M Arg
 pass1Arg (Abs.Arg pos t (Abs.Ident ident)) = do
@@ -143,8 +171,17 @@ pass1Stmt (Abs.Ass pos e1 e2) = do
         else throwError (pos, "cannot assign expression of type " ++ show (typeOfExpr expr) ++ " to variable of type " ++ show (typeOfLvalue lval))
 pass1Stmt (Abs.Incr pos expr) = Incr pos <$> (pass1Expr expr >>= getLvalue)
 pass1Stmt (Abs.Decr pos expr) = Decr pos <$> (pass1Expr expr >>= getLvalue)
-pass1Stmt (Abs.Ret pos expr) = Ret pos <$> (Just <$> pass1Expr expr)
-pass1Stmt (Abs.VRet pos) = return $ Ret pos Nothing
+pass1Stmt (Abs.Ret pos expr) = do
+    expr' <- pass1Expr expr
+    (_, _, retType) <- ask
+    if (typeOfExpr expr' /= retType)
+        then throwError (pos, "cannot return something of type " ++ show (typeOfExpr expr') ++ " from a function returning " ++ show retType)
+        else return $ Ret pos (Just expr')
+pass1Stmt (Abs.VRet pos) = do
+    (_, _, retType) <- ask
+    if (retType /= Void)
+        then throwError (pos, "cannot have empty return in function returning " ++ show retType)
+        else return $ Ret pos Nothing
 pass1Stmt (Abs.Cond pos cond body) = do
     cond' <- pass1Expr cond
     body' <- pass1Stmt body
@@ -284,7 +321,7 @@ pass1Expr (Abs.EBasicArrCoerce pos t e) = do
 pass1Expr (Abs.EClassCoerce pos name e) = do
     case name of
         Abs.EVar _ (Abs.Ident className) -> do
-            (_, cenv) <- ask
+            (_, cenv, _) <- ask
             case M.lookup className cenv of
                 Nothing -> throwError (pos, "unknown type: " ++ className)
                 Just _ -> ECoerce pos (Class className) <$> pass1Expr e
@@ -292,13 +329,13 @@ pass1Expr (Abs.EClassCoerce pos name e) = do
 pass1Expr (Abs.EClassArrCoerce pos name e) = do
     case name of
         Abs.EVar _ (Abs.Ident className) -> do
-            (_, cenv) <- ask
+            (_, cenv, _) <- ask
             case M.lookup className cenv of
                 Nothing -> throwError (pos, "unknown type: " ++ className)
                 Just _ -> ECoerce pos (Array (Class className)) <$> pass1Expr e
         _ -> throwError (pos, "expression cannot be used as a type")
 pass1Expr (Abs.EApp pos (Abs.Ident funIdent) args) = do
-    (fenv, _) <- ask
+    (fenv, _, _) <- ask
     case M.lookup funIdent fenv of
         Nothing -> throwError (pos, "unknown function identifier")
         Just (retType, argTypes) -> do
@@ -311,7 +348,7 @@ pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
     classExpr' <- pass1Expr classExpr
     case typeOfExpr classExpr' of
         Class classIdent -> do
-            (_, cenv) <- ask
+            (_, cenv, _) <- ask
             case M.lookup classIdent cenv of
                 Nothing -> throwError (pos, classIdent ++ " is not a correct class identifier")
                 Just (_, methods) -> do
@@ -328,7 +365,7 @@ pass1Expr (Abs.EClassField pos classExpr (Abs.Ident fieldIdent)) = do
     classExpr' <- pass1Expr classExpr
     case typeOfExpr classExpr' of
         Class classIdent -> do
-            (_, cenv) <- ask
+            (_, cenv, _) <- ask
             case M.lookup classIdent cenv of
                 Nothing -> throwError (pos, classIdent ++ " is not a correct class identifier")
                 Just (fields, _) -> do
@@ -545,6 +582,6 @@ pass1 (Abs.Program p tlds) =
                 if retType /= Int || argTypes /= []
                     then throwError (mainPos, "Incorrect type of main function: its signature should be `int main()`")
                     else return ()
-        fundefs' <- local (\_ -> (fenv, M.empty)) (mapM pass1FunDef fundefs)
+        fundefs' <- local (\_ -> (fenv, M.empty, Void)) (mapM pass1FunDef fundefs)
         return $ Program p [] fundefs'
 
