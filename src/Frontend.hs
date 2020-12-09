@@ -560,20 +560,22 @@ pass1 (Abs.Program p tlds) =
                 Just _ -> throwError (pos, "function " ++ ident ++ " defined twice")
         helper fdefs Abs.ClassDef{} = return fdefs
         helper fdefs Abs.ClassExtDef{} = return fdefs
-        helper2 (pos, acc) (Abs.FnDef _ fundef@(Abs.FunDef currentPos _ (Abs.Ident name) _ _)) =
+        helper2 (pos, fdefs, cdefs, cedefs) (Abs.FnDef _ fundef@(Abs.FunDef currentPos _ (Abs.Ident name) _ _)) =
             if name == "main"
-                then (currentPos, fundef : acc)
-                else (pos, fundef : acc)
-        helper2 acc Abs.ClassDef{} = acc
-        helper2 acc Abs.ClassExtDef{} = acc
+                then (currentPos, fundef : fdefs, cdefs, cedefs)
+                else (pos, fundef : fdefs, cdefs, cedefs)
+        helper2 (pos, fdefs, cdefs, cedefs) (Abs.ClassDef _ (Abs.Ident ident) cbody) = (pos, fdefs, (ident, cbody) : cdefs, cedefs)
+        helper2 (pos, fdefs, cdefs, cedefs) cedef@Abs.ClassExtDef{} = (pos, fdefs, cdefs, cedef : cedefs)
     in do
         fenv <- foldM helper initialFenv tlds
-        let (mainPos, fundefs) = foldl helper2 (Nothing, []) tlds
+        let (mainPos, fundefs, cdefs, cedefs) = foldl helper2 (Nothing, [], [], []) tlds
         case M.lookup "main" fenv of
             Nothing -> throwError (p, "no main function specified")
             Just (retType, argTypes) ->
                 when (retType /= Int || argTypes /= [])
                     (throwError (mainPos, "Incorrect type of main function: its signature should be `int main()`"))
+        when (not (null cdefs) || not (null cedefs))
+            (throwError (Nothing, "Detected classes declarations in the program, those are not supported yet"))
         fundefs' <- local (const (fenv, M.empty, Void)) (mapM pass1FunDef fundefs)
         return $ Program p [] fundefs'
 
