@@ -32,7 +32,6 @@ runFullCompile filename = do
     code <- readFile filename
     case pProgram (tokens code) of
         Ok program -> do
-            let outFilename = fileToS
             let pass1Result = runExcept (evalStateT (runReaderT (pass1 program) (M.empty, M.empty, Void)) (M.empty, 0))
             case pass1Result of
                 Left err -> printErrorAndExit err

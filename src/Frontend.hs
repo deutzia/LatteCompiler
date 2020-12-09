@@ -259,9 +259,6 @@ pass1Item t (Abs.Init pos (Abs.Ident ident) expr) = do
 notLvalue :: Position -> String -> Pass1M a
 notLvalue p s = throwError (p, s ++ " cannot be used as lvalue")
 
-noAttribute :: Position -> String -> Pass1M a
-noAttribute p s = throwError (p, "type " ++ s ++ " doesn't have attributes")
-
 getLvalue :: Expr -> Pass1M Lvalue
 getLvalue (ENewArr _ pos _ _) = notLvalue pos "array declaration"
 getLvalue (ENewObj pos _ ) = notLvalue pos "object declaration"
@@ -416,7 +413,7 @@ pass1Expr (Abs.EMul pos e1 mulop e2) =
                     _ -> return $ EIntOp Int pos e1' op e2'
             }
             case mulop of
-                Abs.Times _ -> createEMul (*) Mul
+                Abs.Times _ -> optimizeBinOp <$> createEMul (*) Mul
                 Abs.Div _ -> checkIf0 e2' "division" *> createEMul div Div
                 Abs.Mod _ -> checkIf0 e2' "modulo" *> createEMul mod Mod
         _ -> throwError (getPosMul mulop, "type mismatch - both operands should be integers")
@@ -431,12 +428,12 @@ pass1Expr (Abs.EAdd pos e1 addop e2) =
     case (typeOfExpr e1', typeOfExpr e2') of
         (Int, Int) -> do
             let createEAdd f op = do {
-                case (e1', e2') of
-                    (ELitInt _ n, ELitInt _ m) -> return $ ELitInt pos (f n m)
+                case (e1', e2', op) of
+                    (ELitInt _ n, ELitInt _ m, _) -> return $ ELitInt pos (f n m)
                     _ -> return $ EIntOp Int pos e1' op e2'
             }
             case addop of
-                Abs.Plus _ -> createEAdd (+) Add
+                Abs.Plus _ -> optimizeBinOp <$> createEAdd (+) Add
                 Abs.Minus _ -> createEAdd (-) Sub
         (String_, String_) ->
             case addop of
@@ -516,11 +513,38 @@ createBoolOp pos e1 e2 f op = do
     let createEBool = do {
         case (e1', e2') of
             (ELitBool _ n, ELitBool _ m) -> return $ ELitBool pos (f n m)
-            _ -> return $ EBoolOp pos e1' op e2'
+            _ -> return $ optimizeBinOp $ EBoolOp pos e1' op e2'
     }
     case (typeOfExpr e1', typeOfExpr e2') of
         (Bool, Bool) -> createEBool
         _ -> throwError (pos, "type mismatch - both operands should be booleans")
+
+optimizeBinOp :: Expr -> Expr
+optimizeBinOp (EIntOp Int p (EIntOp _ _ (ELitInt p' n) Add expr) Add (ELitInt _ m)) =
+    EIntOp Int p (ELitInt p' (n + m)) Add expr
+optimizeBinOp (EIntOp Int p (EIntOp _ _ expr Add (ELitInt p' n)) Add (ELitInt _ m)) =
+    EIntOp Int p (ELitInt p' (n + m)) Add expr
+optimizeBinOp (EIntOp Int p (ELitInt p' m) Add (EIntOp _ _ (ELitInt _ n) Add expr)) =
+    EIntOp Int p (ELitInt p' (n + m)) Add expr
+optimizeBinOp (EIntOp Int p (ELitInt p' m) Add (EIntOp _ _ expr Add (ELitInt _ n))) =
+    EIntOp Int p (ELitInt p' (n + m)) Add expr
+optimizeBinOp (EIntOp Int p (EIntOp _ _ (ELitInt p' n) Mul expr) Mul (ELitInt _ m)) =
+    EIntOp Int p (ELitInt p' (n * m)) Mul expr
+optimizeBinOp (EIntOp Int p (EIntOp _ _ expr Mul (ELitInt p' n)) Mul (ELitInt _ m)) =
+    EIntOp Int p (ELitInt p' (n * m)) Mul expr
+optimizeBinOp (EIntOp Int p (ELitInt p' m) Mul (EIntOp _ _ (ELitInt _ n) Mul expr)) =
+    EIntOp Int p (ELitInt p' (n * m)) Mul expr
+optimizeBinOp (EIntOp Int p (ELitInt p' m) Mul (EIntOp _ _ expr Mul (ELitInt _ n))) =
+    EIntOp Int p (ELitInt p' (n * m)) Mul expr
+optimizeBinOp (EBoolOp _ (ELitBool _ True) And expr) = expr
+optimizeBinOp (EBoolOp _ expr And (ELitBool _ True)) = expr
+optimizeBinOp (EBoolOp p (ELitBool _ True) Or _) = ELitBool p True
+optimizeBinOp (EBoolOp p _ Or (ELitBool _ True)) = ELitBool p True
+optimizeBinOp (EBoolOp _ (ELitBool _ False) Or expr) = expr
+optimizeBinOp (EBoolOp _ expr Or (ELitBool _ False)) = expr
+optimizeBinOp (EBoolOp p (ELitBool _ False) And _) = ELitBool p False
+optimizeBinOp (EBoolOp p _ And(ELitBool _ False)) = ELitBool p False
+optimizeBinOp expr = expr
 
 typeOfExpr :: Expr -> Type
 typeOfExpr (ENewArr t _ _ _) = t
