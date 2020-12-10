@@ -554,11 +554,9 @@ optimizeBinOp (EIntOp Int p (ELitInt p' m) Mul (EIntOp _ _ expr Mul (ELitInt _ n
 optimizeBinOp (EBoolOp _ (ELitBool _ True) And expr) = expr
 optimizeBinOp (EBoolOp _ expr And (ELitBool _ True)) = expr
 optimizeBinOp (EBoolOp p (ELitBool _ True) Or _) = ELitBool p True
-optimizeBinOp (EBoolOp p _ Or (ELitBool _ True)) = ELitBool p True
 optimizeBinOp (EBoolOp _ (ELitBool _ False) Or expr) = expr
 optimizeBinOp (EBoolOp _ expr Or (ELitBool _ False)) = expr
 optimizeBinOp (EBoolOp p (ELitBool _ False) And _) = ELitBool p False
-optimizeBinOp (EBoolOp p _ And(ELitBool _ False)) = ELitBool p False
 optimizeBinOp expr = expr
 
 typeOfExpr :: Expr -> Type
