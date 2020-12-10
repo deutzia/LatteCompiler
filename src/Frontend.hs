@@ -84,28 +84,43 @@ type Fenv = M.Map Ident (Type, [Type]) -- function env
 type Cenv = M.Map Ident (M.Map Ident Type, M.Map Ident (Type, [Type])) -- classes env
 type Pass1M = ReaderT (Fenv, Cenv, Type) (StateT (Venv, Depth) (Except (Position, String)))
 
--- this compiler is agressive and doesn't allow dead code, so the last
--- statement has has to return (or be something that
-checkReturnBlock :: Block -> Bool
-checkReturnBlock (Block _ stmts) = not (null stmts) && checkReturnStmt (last stmts)
+data ReturnState = RSUnknown | RSNever | RSYes deriving Eq
 
-checkReturnStmt :: Stmt -> Bool
+checkReturnBlock :: Block -> ReturnState
+checkReturnBlock (Block _ stmts) =
+    foldl (\res stmt ->
+        if res == RSNever || res == RSYes
+        then res
+        else checkReturnStmt stmt) RSUnknown stmts
+
+checkReturnStmt :: Stmt -> ReturnState
 checkReturnStmt stmt =
     case stmt of
-        Empty _ -> False
+        Empty _ -> RSUnknown
         BStmt _ block -> checkReturnBlock block
-        Decl{} -> False
-        Ass{} -> False
-        Incr{} -> False
-        Decr{} -> False
-        Ret{} -> True
-        Cond _ _ s1 (Just s2) -> checkReturnStmt s1 && checkReturnStmt s2
-        Cond{} -> False
+        Decl{} -> RSUnknown
+        Ass{} -> RSUnknown
+        Incr{} -> RSUnknown
+        Decr{} -> RSUnknown
+        Ret{} -> RSYes
+        Cond _ _ s1 (Just s2) ->
+            let
+                res1 = checkReturnStmt s1
+                res2 = checkReturnStmt s2
+            in
+            if res1 == res2
+                then res1
+                else
+                    if (res1 == RSYes && res2 == RSNever) || (res1 == RSNever && res2 == RSYes)
+                        then RSYes
+                        else RSUnknown
+        Cond{} -> RSUnknown
         -- allow using while (true) without return
-        While _ (ELitBool _ True) _ -> True
-        While{} -> False
-        SExp{} -> False
-        For{} -> False
+        While _ (ELitBool _ True) _ -> RSNever
+        While{} -> RSUnknown
+        SExp _ (EApp _ _ "error" _) -> RSNever
+        SExp{} -> RSUnknown
+        For{} -> RSUnknown
 
 pass1BuiltinType :: Abs.BuiltinType Position -> Type
 pass1BuiltinType (Abs.Int _) = Int
@@ -139,9 +154,9 @@ pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
     put (newVenv, depth + 1)
     body' <- local (\(fenv, cenv, _) -> (fenv, cenv, t')) (pass1Block body)
     put (oldVenv, depth)
-    if checkReturnBlock body' || t' == Void
+    if checkReturnBlock body' /= RSUnknown || t' == Void
         then return $ FunDef pos t' name args' body'
-        else throwError (pos, "function returning non-void doesn't have return as a last instruction")
+        else throwError (pos, "function returning non-void doesn't have a return")
 
 pass1Arg :: Abs.Arg Position -> Pass1M Arg
 pass1Arg (Abs.Arg pos t (Abs.Ident ident)) = do
