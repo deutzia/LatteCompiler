@@ -1,3 +1,5 @@
 dist-newstyle
 *.swp
 *.swo
+.stack-work/
+stack.yaml.lock

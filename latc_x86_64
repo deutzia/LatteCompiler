@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+scriptdir=$(dirname $0)
+args=()
+for arg in $@; do
+    args+=($(readlink -f $arg))
+done
+
+echo ${args[@]}
+cd $scriptdir
+stack exec latc_x86_64 ${args[@]}
+cd -

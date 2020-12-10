@@ -3,7 +3,6 @@ version:             0.1.0.0
 synopsis:            Compiler of Latte - a subset of Java
 homepage:            github.com/deutzia/LatteCompiler
 license:             MIT
-license-file:        LICENSE
 author:              Iwona Kotlarska
 maintainer:          pinus314@gmail.com
 category:            Language
