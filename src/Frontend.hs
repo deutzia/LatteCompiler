@@ -165,6 +165,15 @@ pass1FunDef :: Abs.FunDef Position -> Pass1M FunDef
 pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
     t' <- pass1Type t
     args' <- mapM pass1Arg args
+    foldM_
+        (\vars (p, _, ident) ->
+            if S.member ident vars
+                then throwError
+                    (p, "argument " ++ show ident ++ " defined multiple times")
+                else return $ S.insert ident vars
+        )
+        S.empty
+        args'
     (oldVenv, depth) <- get
     let envModification = M.fromList (map
             (\(_, type_, ident) -> (ident, (type_, depth))) args')
@@ -808,6 +817,9 @@ pass1Classes classes classesExt =
     classes' <- mapM
         (\(pos, className, body) -> do
             let (fns, attrs) = partitionWith splitBody body
+            (oldVenv, depth) <- get
+            let newVenv = M.insert "self" (Class className, depth) oldVenv
+            put (newVenv, depth)
             fields <- mapM
                 (\(p, t, ident) -> do
                     t' <- pass1Type t
@@ -816,11 +828,15 @@ pass1Classes classes classesExt =
             methods <- local
                 (\(fenv, cenv, type_, _) -> (fenv, cenv, type_, Just className))
                 (mapM pass1FunDef fns)
+            put (oldVenv, depth)
             return $ ClassDef pos className Nothing fields methods
         ) classes
     classesExt' <- mapM
         (\(pos, className, parentName, body) -> do
             let (fns, attrs) = partitionWith splitBody body
+            (oldVenv, depth) <- get
+            let newVenv = M.insert "self" (Class className, depth) oldVenv
+            put (newVenv, depth)
             fields <- mapM
                 (\(p, t, ident) -> do
                     t' <- pass1Type t
@@ -830,6 +846,7 @@ pass1Classes classes classesExt =
                 (\(fenv, cenv, type_, _) ->
                     (fenv, cenv, type_, Just className))
                 (mapM pass1FunDef fns)
+            put (oldVenv, depth)
             return $ ClassDef pos className (Just parentName) fields methods
         ) classesExt
     return $ classes' ++ classesExt'
