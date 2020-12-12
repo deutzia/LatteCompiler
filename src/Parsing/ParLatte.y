@@ -47,14 +47,15 @@ import Parsing.ErrM
   'if' { PT _ (TS _ 32) }
   'int' { PT _ (TS _ 33) }
   'new' { PT _ (TS _ 34) }
-  'return' { PT _ (TS _ 35) }
-  'string' { PT _ (TS _ 36) }
-  'true' { PT _ (TS _ 37) }
-  'void' { PT _ (TS _ 38) }
-  'while' { PT _ (TS _ 39) }
-  '{' { PT _ (TS _ 40) }
-  '||' { PT _ (TS _ 41) }
-  '}' { PT _ (TS _ 42) }
+  'null' { PT _ (TS _ 35) }
+  'return' { PT _ (TS _ 36) }
+  'string' { PT _ (TS _ 37) }
+  'true' { PT _ (TS _ 38) }
+  'void' { PT _ (TS _ 39) }
+  'while' { PT _ (TS _ 40) }
+  '{' { PT _ (TS _ 41) }
+  '||' { PT _ (TS _ 42) }
+  '}' { PT _ (TS _ 43) }
 
   L_ident {PT _ (TV _)}
   L_integ {PT _ (TI _)}
@@ -314,7 +315,20 @@ Expr6 :: {
 : Ident {
   (fst $1, Parsing.AbsLatte.EVar (fst $1)(snd $1)) 
 }
-| Integer {
+| Expr6 '.' Ident '(' ListExpr ')' {
+  (fst $1, Parsing.AbsLatte.EClassMethod (fst $1)(snd $1)(snd $3)(snd $5)) 
+}
+| Expr6 '.' Ident {
+  (fst $1, Parsing.AbsLatte.EClassField (fst $1)(snd $1)(snd $3)) 
+}
+| Expr7 {
+  (fst $1, snd $1)
+}
+
+Expr7 :: {
+  (Maybe (Int, Int), Expr (Maybe (Int, Int)))
+}
+: Integer {
   (fst $1, Parsing.AbsLatte.ELitInt (fst $1)(snd $1)) 
 }
 | 'true' {
@@ -326,17 +340,11 @@ Expr6 :: {
 | String {
   (fst $1, Parsing.AbsLatte.EString (fst $1)(snd $1)) 
 }
-| '(' BuiltinType ')' Expr6 {
-  (Just (tokenLineCol $1), Parsing.AbsLatte.EBasicCoerce (Just (tokenLineCol $1)) (snd $2)(snd $4)) 
+| '(' Expr ')' 'null' {
+  (Just (tokenLineCol $1), Parsing.AbsLatte.EClassCoerce (Just (tokenLineCol $1)) (snd $2)) 
 }
-| '(' BuiltinType '[]' ')' Expr6 {
-  (Just (tokenLineCol $1), Parsing.AbsLatte.EBasicArrCoerce (Just (tokenLineCol $1)) (snd $2)(snd $5)) 
-}
-| '(' Expr ')' Expr6 {
-  (Just (tokenLineCol $1), Parsing.AbsLatte.EClassCoerce (Just (tokenLineCol $1)) (snd $2)(snd $4)) 
-}
-| '(' Expr '[]' ')' Expr6 {
-  (Just (tokenLineCol $1), Parsing.AbsLatte.EClassArrCoerce (Just (tokenLineCol $1)) (snd $2)(snd $5)) 
+| '(' ArrayType ')' 'null' {
+  (Just (tokenLineCol $1), Parsing.AbsLatte.EClassArrCoerce (Just (tokenLineCol $1)) (snd $2)) 
 }
 | Ident '(' ListExpr ')' {
   (fst $1, Parsing.AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
@@ -348,13 +356,7 @@ Expr6 :: {
 Expr5 :: {
   (Maybe (Int, Int), Expr (Maybe (Int, Int)))
 }
-: Expr5 '.' Ident '(' ListExpr ')' {
-  (fst $1, Parsing.AbsLatte.EClassMethod (fst $1)(snd $1)(snd $3)(snd $5)) 
-}
-| Expr5 '.' Ident {
-  (fst $1, Parsing.AbsLatte.EClassField (fst $1)(snd $1)(snd $3)) 
-}
-| Expr5 '[' Expr ']' {
+: Expr5 '[' Expr ']' {
   (fst $1, Parsing.AbsLatte.EArrAt (fst $1)(snd $1)(snd $3)) 
 }
 | '-' Expr6 {

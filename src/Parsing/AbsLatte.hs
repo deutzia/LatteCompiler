@@ -123,10 +123,8 @@ data Expr a
     | ELitTrue a
     | ELitFalse a
     | EString a String
-    | EBasicCoerce a (BuiltinType a) (Expr a)
-    | EBasicArrCoerce a (BuiltinType a) (Expr a)
-    | EClassCoerce a (Expr a) (Expr a)
-    | EClassArrCoerce a (Expr a) (Expr a)
+    | EClassCoerce a (Expr a)
+    | EClassArrCoerce a (ArrayType a)
     | EApp a Ident [Expr a]
     | EClassMethod a (Expr a) Ident [Expr a]
     | EClassField a (Expr a) Ident
@@ -149,10 +147,8 @@ instance Functor Expr where
         ELitTrue a -> ELitTrue (f a)
         ELitFalse a -> ELitFalse (f a)
         EString a string -> EString (f a) string
-        EBasicCoerce a builtintype expr -> EBasicCoerce (f a) (fmap f builtintype) (fmap f expr)
-        EBasicArrCoerce a builtintype expr -> EBasicArrCoerce (f a) (fmap f builtintype) (fmap f expr)
-        EClassCoerce a expr1 expr2 -> EClassCoerce (f a) (fmap f expr1) (fmap f expr2)
-        EClassArrCoerce a expr1 expr2 -> EClassArrCoerce (f a) (fmap f expr1) (fmap f expr2)
+        EClassCoerce a expr -> EClassCoerce (f a) (fmap f expr)
+        EClassArrCoerce a arraytype -> EClassArrCoerce (f a) (fmap f arraytype)
         EApp a ident exprs -> EApp (f a) ident (map (fmap f) exprs)
         EClassMethod a expr ident exprs -> EClassMethod (f a) (fmap f expr) ident (map (fmap f) exprs)
         EClassField a expr ident -> EClassField (f a) (fmap f expr) ident
