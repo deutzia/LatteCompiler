@@ -845,7 +845,21 @@ pass1Classes classes classesExt =
             methods <- local
                 (\(fenv, cenv, type_, _) ->
                     (fenv, cenv, type_, Just className))
-                (mapM pass1FunDef fns)
+                (mapM (\fn -> do
+                    fn'@(FunDef _ retType funIdent args _) <- pass1FunDef fn
+                    parentType <- catchError
+                        (Just <$> ressolveFunction pos funIdent parentName)
+                        (\_ -> return Nothing)
+                    case parentType of
+                        Just (retType', argTypes') ->
+                            let argTypes = map (\(_, t, _) -> t) args in
+                            if retType' == retType && argTypes' == argTypes
+                                then return fn'
+                                else throwError
+                                    (pos,
+                                    "overloaded function type has to be exactly the same as original")
+                        Nothing -> return fn')
+                     fns)
             put (oldVenv, depth)
             return $ ClassDef pos className (Just parentName) fields methods
         ) classesExt
