@@ -14,6 +14,7 @@ cabal-version:       >=1.10
 executable latc_x86_64
   main-is:           Main.hs
   other-modules:     Frontend
+                     Quadruples
                      Parsing.AbsLatte
                      Parsing.ErrM
                      Parsing.LexLatte
