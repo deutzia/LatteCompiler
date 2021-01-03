@@ -3,3 +3,4 @@ dist-newstyle
 *.swo
 .stack-work/
 stack.yaml.lock
+*.o
