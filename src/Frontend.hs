@@ -87,10 +87,10 @@ data BoolOp = Or | And deriving Show
 
 type Depth = Integer
 type Venv = M.Map Ident (Type, Depth, Ident) -- variable env
-type Fenv = M.Map Ident (Type, [Type]) -- function env
+type Fenv = M.Map Ident (Type, [Type], Ident) -- function env
 -- classident -> (fieldname -> type), (methodname -> (rettype, argtypes)), parent
 type Cenv =
-    M.Map Ident (M.Map Ident Type, M.Map Ident (Type, [Type]), Maybe Ident)
+    M.Map Ident (M.Map Ident Type, M.Map Ident (Type, [Type], Ident), Maybe Ident)
 -- ReaderT (fenv, cenv, type returned by current fuction, class we're in)
 -- StateT (venv, depth of blocks, name seed)
 type Pass1M =
@@ -406,7 +406,7 @@ ressolveVariable pos varIdent classIdent = do
                 Nothing -> undeclaredIdentifier pos varIdent
                 Just parentIdent -> ressolveVariable pos varIdent parentIdent
 
-ressolveFunction :: Position -> Ident -> Ident -> Pass1M (Type, [Type])
+ressolveFunction :: Position -> Ident -> Ident -> Pass1M (Type, [Type], Ident)
 ressolveFunction pos funIdent classIdent = do
     (_, cenv, _, _) <- ask
     case M.lookup classIdent cenv of
@@ -471,7 +471,7 @@ pass1Expr (Abs.EClassArrCoerce pos t) = do
     return $ ECoerce pos t'
 pass1Expr (Abs.EApp pos (Abs.Ident funIdent) args) = do
     (fenv, _, _, _) <- ask
-    (retType, argTypes) <- case M.lookup funIdent fenv of
+    (retType, argTypes, tmpName) <- case M.lookup funIdent fenv of
         Nothing ->  do
             (_, _, _, className) <- ask
             case className of
@@ -481,7 +481,7 @@ pass1Expr (Abs.EApp pos (Abs.Ident funIdent) args) = do
     args' <- mapM pass1Expr args
     let argTypes' = map typeOfExpr args'
     checkFArgs pos funIdent argTypes' argTypes
-    return $ EApp retType pos funIdent args'
+    return $ EApp retType pos tmpName args'
 pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
     classExpr' <- pass1Expr classExpr
     case typeOfExpr classExpr' of
@@ -493,7 +493,7 @@ pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
                         (pos,
                             classIdent ++ " is not a correct class identifier")
                 Just _ -> do
-                    (retType, argTypes) <- ressolveFunction
+                    (retType, argTypes, tmpName) <- ressolveFunction
                         pos methodIdent classIdent
                     args' <- mapM pass1Expr args
                     let argTypes' = map typeOfExpr args'
@@ -503,7 +503,7 @@ pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
                         argTypes'
                         argTypes
                     return $
-                        EClassMethod retType pos classExpr' methodIdent args'
+                        EClassMethod retType pos classExpr' tmpName args'
         _ -> throwError (pos, "calling method on non-class type is forbidden")
 pass1Expr (Abs.EClassField pos classExpr (Abs.Ident fieldIdent)) = do
     classExpr' <- pass1Expr classExpr
@@ -753,12 +753,12 @@ typeOfExpr (EIntOp t _ _ _ _) = t
 typeOfExpr ERel{} = Bool
 typeOfExpr EBoolOp{} = Bool
 
-getTypesFromClassBody :: (M.Map Ident Type, M.Map Ident (Type, [Type])) -> Abs.ClassBody Position -> Pass1M (M.Map Ident Type, M.Map Ident (Type, [Type]))
+getTypesFromClassBody :: (M.Map Ident Type, M.Map Ident (Type, [Type], Ident)) -> Abs.ClassBody Position -> Pass1M (M.Map Ident Type, M.Map Ident (Type, [Type], Ident))
 getTypesFromClassBody (fields, methods) (Abs.AttrFun _ (Abs.FunDef _ t (Abs.Ident ident) args _)) = do
     t' <- pass1Type t
     args' <- mapM pass1Arg args
     let argTypes = map (\(_, type_, _) -> type_) args'
-    return (fields, M.insert ident (t', argTypes) methods)
+    return (fields, M.insert ident (t', argTypes, "_lat_" ++ ident) methods)
 getTypesFromClassBody (fields, methods) (Abs.Attr _ t (Abs.Ident ident)) = do
     t' <- pass1Type t
     return (M.insert ident t' fields, methods)
@@ -874,7 +874,7 @@ pass1Classes classes classesExt =
                         (Just <$> ressolveFunction pos funIdent parentName)
                         (\_ -> return Nothing)
                     case parentType of
-                        Just (retType', argTypes') ->
+                        Just (retType', argTypes', _) ->
                             let argTypes = map (\(_, t, _) -> t) args in
                             if retType' == retType && argTypes' == argTypes
                                 then return fn'
@@ -894,18 +894,18 @@ pass1 :: Abs.Program Position -> Pass1M Program
 pass1 (Abs.Program p tlds) =
     let
         initialFenv = M.fromList
-            [("printInt", (Void, [Int])),
-            ("printString", (Void, [String_])),
-            ("error", (Void, [])),
-            ("readInt", (Int, [])),
-            ("readString", (String_, []))]
+            [("printInt", (Void, [Int], "printInt")),
+            ("printString", (Void, [String_], "printString")),
+            ("error", (Void, [], "error")),
+            ("readInt", (Int, [], "readInt")),
+            ("readString", (String_, [], "readString"))]
     in
     let
         helper fdefs (Abs.FnDef pos (Abs.FunDef _ t (Abs.Ident ident) args _)) = do
             t' <- pass1Type t
             args' <- mapM (\(Abs.Arg _ type_ _) -> pass1Type type_) args
             case M.lookup ident fdefs of
-                Nothing -> return $ M.insert ident (t', args') fdefs
+                Nothing -> return $ M.insert ident (t', args', "_lat_" ++ ident) fdefs
                 Just _ -> throwError (pos, "function " ++ ident ++ " redefined")
         helper fdefs Abs.ClassDef{} = return fdefs
         helper fdefs Abs.ClassExtDef{} = return fdefs
@@ -921,7 +921,7 @@ pass1 (Abs.Program p tlds) =
         fenv <- local (const (M.empty, cenv, Void, Nothing)) (foldM helper initialFenv tlds)
         case M.lookup "main" fenv of
             Nothing -> throwError (p, "no main function specified")
-            Just (retType, argTypes) ->
+            Just (retType, argTypes, _) ->
                 when (retType /= Int || argTypes /= [])
                     (throwError (mainPos, "Incorrect type of main function: its signature should be `int main()`"))
 --        when (not (null cdefs) || not (null cedefs))
