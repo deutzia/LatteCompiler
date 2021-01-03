@@ -8,7 +8,6 @@ import qualified Data.Set as S
 import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Reader
-import Debug.Trace
 import Util
 
 import qualified Parsing.AbsLatte as Abs
@@ -56,7 +55,7 @@ data Stmt
     | SExp Position Expr
     | For Position Ident Expr Stmt
     deriving Show
-data Item = Item Position Ident (Maybe Expr) deriving Show
+data Item = Item Position Ident Expr deriving Show
 -- position and type are kept for every nonobvious expression and lvalue
 data Expr
     = ENewArr Type Position Type Expr
@@ -321,7 +320,13 @@ checkdecl pos ident t = do
 pass1Item :: Type -> Abs.Item Position -> Pass1M Item
 pass1Item t (Abs.NoInit pos (Abs.Ident ident)) = do
     checkdecl pos ident t
-    return $ Item pos ident Nothing
+    case t of
+        Int -> return $ Item pos ident (ELitInt pos 0)
+        Bool -> return $ Item pos ident (ELitBool pos False)
+        String_ -> return $ Item pos ident (EString pos "")
+        Void -> throwError  (pos, "cannot declare variables of type void")
+        Class _ -> return $ Item pos ident (ECoerce pos t)
+        Array _ -> return $ Item pos ident (ECoerce pos t)
 pass1Item t (Abs.Init pos (Abs.Ident ident) expr) = do
     expr' <- pass1Expr expr
     canAssign <- isAssignable (typeOfExpr expr') t
@@ -331,7 +336,7 @@ pass1Item t (Abs.Init pos (Abs.Ident ident) expr) = do
              " to variable of type " ++ show t)
         else do
             checkdecl pos ident t
-            return $ Item pos ident $ Just expr'
+            return $ Item pos ident expr'
 
 notLvalue :: Position -> String -> Pass1M a
 notLvalue p s = throwError (p, s ++ " cannot be used as lvalue")
