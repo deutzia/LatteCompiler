@@ -86,19 +86,23 @@ data IntRel = Lth | Le | Gth | Ge | Equ | Neq deriving Show
 data BoolOp = Or | And deriving Show
 
 type Depth = Integer
-type Venv = M.Map Ident (Type, Depth) -- variable env
+type Venv = M.Map Ident (Type, Depth, Ident) -- variable env
 type Fenv = M.Map Ident (Type, [Type]) -- function env
 -- classident -> (fieldname -> type), (methodname -> (rettype, argtypes)), parent
 type Cenv =
     M.Map Ident (M.Map Ident Type, M.Map Ident (Type, [Type]), Maybe Ident)
 -- ReaderT (fenv, cenv, type returned by current fuction, class we're in)
--- StateT (venv, depth of blocks)
+-- StateT (venv, depth of blocks, name seed)
 type Pass1M =
     ReaderT
         (Fenv, Cenv, Type, Maybe Ident)
-        (StateT (Venv, Depth) (Except (Position, String)))
+        (StateT (Venv, Depth, Int) (Except (Position, String)))
 
 data ReturnState = RSUnknown | RSNever | RSYes deriving Eq
+
+createVarName :: Pass1M Ident
+createVarName =
+    state (\(venv, d, seed) -> ("var" ++ show seed, (venv, d, seed + 1)))
 
 checkReturnBlock :: Block -> ReturnState
 checkReturnBlock (Block _ stmts) =
@@ -153,7 +157,8 @@ pass1ClassType ident pos = do
 pass1ArrayType :: Abs.ArrayType Position -> Pass1M Type
 pass1ArrayType (Abs.BuiltinArr _ type_) =
     return $ Array (pass1BuiltinType type_)
-pass1ArrayType (Abs.UserArr pos (Abs.Ident ident)) = Array <$> pass1ClassType ident pos
+pass1ArrayType (Abs.UserArr pos (Abs.Ident ident)) =
+    Array <$> pass1ClassType ident pos
 
 pass1Type :: Abs.Type Position -> Pass1M Type
 pass1Type (Abs.BltinType _ t) = return (pass1BuiltinType t)
@@ -173,14 +178,17 @@ pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
         )
         S.empty
         args'
-    (oldVenv, depth) <- get
-    let envModification = M.fromList (map
-            (\(_, type_, ident) -> (ident, (type_, depth))) args')
+    (oldVenv, depth, seed) <- get
+    envModL <- mapM (\(_, type_, ident) -> do
+            tmpName <- createVarName
+            return (ident, (type_, depth, tmpName))) args'
+    let envModification = M.fromList envModL
     let newVenv = M.union envModification oldVenv
-    put (newVenv, depth + 1)
+    put (newVenv, depth + 1, seed)
     body' <- local
         (\(fenv, cenv, _, c) -> (fenv, cenv, t', c)) (pass1Block body)
-    put (oldVenv, depth)
+    (_, _, seed') <- get
+    put (oldVenv, depth, seed')
     if checkReturnBlock body' /= RSUnknown || t' == Void
         then return $ FunDef pos t' name args' body'
         else throwError
@@ -193,10 +201,11 @@ pass1Arg (Abs.Arg pos t (Abs.Ident ident)) = do
 
 pass1Block :: Abs.Block Position -> Pass1M Block
 pass1Block (Abs.Block pos stmts) = do
-    (oldVenv, depth) <- get
-    put (oldVenv, depth + 1)
+    (oldVenv, depth, seed) <- get
+    put (oldVenv, depth + 1, seed)
     stmts' <- mapM pass1Stmt stmts
-    put (oldVenv, depth)
+    (_, _, seed') <- get
+    put (oldVenv, depth, seed')
     return $ Block pos stmts'
 
 -- can assign value of type t1 to lvalue of type t2
@@ -292,10 +301,15 @@ pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
     case typeOfExpr iter' of
         Array iterType -> if t' == iterType
             then do
-                (oldVenv, depth) <- get
-                put (M.insert ident (iterType, depth) oldVenv, depth + 1)
+                varName <- createVarName
+                (oldVenv, depth, seed) <- get
+                put
+                    (M.insert ident (iterType, depth, varName) oldVenv,
+                        depth + 1,
+                        seed)
                 body' <- pass1Stmt body
-                put (oldVenv, depth)
+                (_, _, seed') <- get
+                put (oldVenv, depth, seed')
                 return (For pos ident iter' body')
             else throwError
                 (pos,
@@ -311,11 +325,12 @@ pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
 -- throw an error if we can't declare a particular variable
 checkdecl :: Position -> Ident -> Type -> Pass1M ()
 checkdecl pos ident t = do
-    (venv, depth)  <- get
+    varName <- createVarName
+    (venv, depth, seed) <- get
     case M.lookup ident venv of
-        Nothing -> put (M.insert ident (t, depth) venv, depth)
-        Just (_, depth') -> if depth' < depth
-            then put (M.insert ident (t, depth) venv, depth)
+        Nothing -> put (M.insert ident (t, depth, varName) venv, depth, seed)
+        Just (_, depth', _) -> if depth' < depth
+            then put (M.insert ident (t, depth, varName) venv, depth, seed)
         else throwError (pos, ident ++ " has already been declared")
 pass1Item :: Type -> Abs.Item Position -> Pass1M Item
 pass1Item t (Abs.NoInit pos (Abs.Ident ident)) = do
@@ -431,9 +446,9 @@ pass1Expr (Abs.ENewArr pos t e) = do
         _ -> throwError (pos, "array size has to be an integer")
 pass1Expr (Abs.ENewObj pos t) = ENewObj pos <$> pass1Type t
 pass1Expr (Abs.EVar pos (Abs.Ident ident)) = do
-    (venv, _) <- get
+    (venv, _, _) <- get
     case M.lookup ident venv of
-        Just (t, _) -> return $ EVar t pos ident
+        Just (t, _, tmpName) -> return $ EVar t pos tmpName
         Nothing -> do
             (_, _, _, className) <- ask
             case className of
@@ -822,9 +837,10 @@ pass1Classes classes classesExt =
     classes' <- mapM
         (\(pos, className, body) -> do
             let (fns, attrs) = partitionWith splitBody body
-            (oldVenv, depth) <- get
-            let newVenv = M.insert "self" (Class className, depth) oldVenv
-            put (newVenv, depth)
+            (oldVenv, depth, seed) <- get
+            let newVenv =
+                    M.insert "self" (Class className, depth, "self") oldVenv
+            put (newVenv, depth, seed)
             fields <- mapM
                 (\(p, t, ident) -> do
                     t' <- pass1Type t
@@ -833,15 +849,17 @@ pass1Classes classes classesExt =
             methods <- local
                 (\(fenv, cenv, type_, _) -> (fenv, cenv, type_, Just className))
                 (mapM pass1FunDef fns)
-            put (oldVenv, depth)
+            (_, _, seed') <- get
+            put (oldVenv, depth, seed')
             return $ ClassDef pos className Nothing fields methods
         ) classes
     classesExt' <- mapM
         (\(pos, className, parentName, body) -> do
             let (fns, attrs) = partitionWith splitBody body
-            (oldVenv, depth) <- get
-            let newVenv = M.insert "self" (Class className, depth) oldVenv
-            put (newVenv, depth)
+            (oldVenv, depth, seed) <- get
+            let newVenv =
+                    M.insert "self" (Class className, depth, "self") oldVenv
+            put (newVenv, depth, seed)
             fields <- mapM
                 (\(p, t, ident) -> do
                     t' <- pass1Type t
@@ -865,7 +883,8 @@ pass1Classes classes classesExt =
                                     "overloaded function type has to be exactly the same as original")
                         Nothing -> return fn')
                      fns)
-            put (oldVenv, depth)
+            (_, _, seed') <- get
+            put (oldVenv, depth, seed')
             return $ ClassDef pos className (Just parentName) fields methods
         ) classesExt
     return $ classes' ++ classesExt'
