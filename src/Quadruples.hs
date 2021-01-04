@@ -7,7 +7,7 @@ import Control.Monad.State
 import qualified Frontend as F
 
 type Label = String
-type Register = String -- name of the variable / temporary variable
+type Register = String
 data BlockEnd
     = UnconditionalJump Label
     | ConditionalJump Register Label Label
@@ -58,18 +58,6 @@ getStringName s = do
             let name = "[str" ++ show n ++ "]" in
             put (n + 1, M.insert s name en) >> return name
         Just name -> return name
-
-negateIntRel :: F.IntRel -> F.IntRel
-negateIntRel F.Lth = F.Ge
-negateIntRel F.Le = F.Gth
-negateIntRel F.Gth = F.Le
-negateIntRel F.Ge = F.Lth
-negateIntRel F.Equ = F.Neq
-negateIntRel F.Neq = F.Equ
-
-negateBoolOp :: F.BoolOp -> F.BoolOp
-negateBoolOp F.Or = F.And
-negateBoolOp F.And = F.Or
 
 getLoc :: F.Lvalue -> QuadM Register
 getLoc (F.VarRef _ _ ident) = return ident
