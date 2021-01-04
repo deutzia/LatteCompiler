@@ -17,6 +17,7 @@ extern _printInt
 extern _printString
 extern _readInt
 extern _readString
+extern _lat_main
 
 _stradd:
     mov r12, rsp
@@ -91,5 +92,11 @@ readString:
     mov rsp, r12
     lea r12, [rsp - 8]
     mov [r12], rax
+    ret
+
+main:
+    add rsp, 8 ; prepare space for returned value
+    call _lat_main
+    pop eax
     ret
 
