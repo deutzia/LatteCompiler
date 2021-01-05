@@ -68,20 +68,21 @@ getLoc (F.VarRef _ _ ident) = return ident
 getLoc (F.ClassAttr _ _ _ _) = undefined
 getLoc (F.ArrRef _ _ _ _) = undefined
 
-getQuadsProg :: F.Program -> ([[Block]], StrEnv)
+getQuadsProg :: F.Program -> ([([Block], [String])], StrEnv)
 getQuadsProg (F.Program _ classDefs funDefs) =
     if not (null classDefs)
         then undefined
-        else let (blocks, (_, strenv)) = runState (getQuadsFunDefs funDefs) (0, M.empty) in (map reverse blocks, strenv)
+        else let (blocks, (_, strenv)) = runState (getQuadsFunDefs funDefs) (0, M.empty) in (blocks, strenv)
 
-getQuadsFunDefs :: [F.FunDef] -> QuadM [[Block]]
+getQuadsFunDefs :: [F.FunDef] -> QuadM [([Block], [String])]
 getQuadsFunDefs = mapM getQuadsFunDef
 
-getQuadsFunDef :: F.FunDef -> QuadM [Block]
-getQuadsFunDef (F.FunDef _ _ name _ body) = do
+getQuadsFunDef :: F.FunDef -> QuadM ([Block], [String])
+getQuadsFunDef (F.FunDef _ _ name args body) = do
     (lastLabel, quads, blocks) <- getQuadsBlock (name, [], []) body
-    return $ reverse $
-        (Block lastLabel (reverse quads) (Return Nothing)) : blocks
+    let argNames = map (\(_, _, name) -> name) args
+    return (reverse $
+        (Block lastLabel (reverse quads) (Return Nothing)) : blocks, argNames)
 
 getQuadsBlock :: GenTriple -> F.Block -> QuadM GenTriple
 getQuadsBlock triple (F.Block _ stmts) = foldM getQuadsStmt triple stmts

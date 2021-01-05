@@ -15,6 +15,8 @@ import Parsing.ErrM
 import Parsing.LexLatte
 import Parsing.ParLatte
 import Frontend
+import Quadruples
+import AsmBackend
 
 fileToS :: FilePath -> FilePath
 fileToS fileName = dropExtension fileName ++ ".s"
@@ -35,7 +37,12 @@ runFullCompile filename = do
             let pass1Result = runExcept (evalStateT (runReaderT (pass1 program) (M.empty, M.empty, Void, Nothing)) (M.empty, 0, 0))
             case pass1Result of
                 Left err -> printErrorAndExit err
-                Right (Program _ _ _) ->  hPutStrLn stderr $ "OK"
+                Right p@(Program _ _ _) -> do
+                    hPutStrLn stderr $ "OK"
+                    let outfilename = fileToS filename
+                    writeFile outfilename ""
+                    let outFun = appendFile outfilename
+                    generateAssembly outFun (getQuadsProg p)
         Bad e -> printErrorAndExit (Nothing, e)
 
 main :: IO ()

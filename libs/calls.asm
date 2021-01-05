@@ -8,6 +8,7 @@ global printInt
 global printString
 global readInt
 global readString
+global main
 
 extern __stradd
 extern __stardd
@@ -97,6 +98,6 @@ readString:
 main:
     add rsp, 8 ; prepare space for returned value
     call _lat_main
-    pop eax
+    pop rax
     ret
 

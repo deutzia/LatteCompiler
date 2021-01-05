@@ -15,6 +15,7 @@ executable latc_x86_64
   main-is:           Main.hs
   other-modules:     Frontend
                      Quadruples
+                     AsmBackend
                      Parsing.AbsLatte
                      Parsing.ErrM
                      Parsing.LexLatte
