@@ -6,3 +6,4 @@ stack.yaml.lock
 *.o
 *.lat
 *.s
+a.out

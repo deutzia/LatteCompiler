@@ -28,7 +28,7 @@ fetchValReg outFun name reg = do
     case M.lookup name regenv of
         Nothing -> undefined
         Just offset -> do
-            outFun $ "lea r8, [rbp + " ++ show offset ++ "]"
+            outFun $ "lea r8, [rbp - " ++ show offset ++ "]"
             outFun $ "mov " ++ reg ++ ", [r8]"
 
 fetchVal :: (String -> GenM ()) -> Q.Location -> String -> GenM ()
@@ -44,7 +44,7 @@ writeValReg outFun name reg = do
     case M.lookup name regenv of
         Nothing -> undefined
         Just offset -> do
-            outFun $ "lea r8, [rbp + " ++ show offset ++ "]"
+            outFun $ "lea r8, [rbp - " ++ show offset ++ "]"
             outFun $ "mov [r8], " ++ reg
 
 writeVal :: (String -> GenM ()) -> Q.Location -> String -> GenM ()
@@ -83,7 +83,7 @@ generateAssemblyBlock outFun (offset, isFirst) (Q.Block label quads end) = do
     when isFirst (do
             wrappedOutFun "push rbp"
             wrappedOutFun "mov rbp, rsp"
-            wrappedOutFun $ "add rsp, " ++ show offset)
+            wrappedOutFun $ "sub rsp, " ++ show offset)
     foldM (generateAssemblyQuad wrappedOutFun) () quads
     generateAssemblyBEnd wrappedOutFun end
     return (offset, False)
@@ -142,11 +142,11 @@ generateAssemblyQuad outFun () (Q.Quadruple r1 op r2 r3) = do
             writeVal outFun r1 "rdx"
 generateAssemblyQuad outFun () (Q.Call r1 name args) =
     let offset = length args + 1 in do
-    outFun $ "add rsp, " ++ show (offset * 8)
+    outFun $ "sub rsp, " ++ show (offset * 8)
     foldM_
         (\ofs arg -> do
             fetchVal outFun arg "rax"
-            outFun $ "lea r8, [rsp - " ++ show ofs ++ "]"
+            outFun $ "lea r8, [rsp + " ++ show ofs ++ "]"
             outFun $ "mov [r8], rax"
             return (ofs + 8)
         )
@@ -154,7 +154,7 @@ generateAssemblyQuad outFun () (Q.Call r1 name args) =
         args
     outFun $ "call " ++ name
     outFun $ "mov rax, [rsp]"
-    outFun $ "sub rsp, " ++ show (offset * 8)
+    outFun $ "add rsp, " ++ show (offset * 8)
     writeVal outFun r1 "rax"
 generateAssemblyQuad outFun () (Q.GetVar r1 r2) = do
     fetchValReg outFun r2 "rax"
@@ -177,10 +177,10 @@ generateAssemblyBEnd outFun (Q.Return Nothing) = do
     outFun "ret"
 generateAssemblyBEnd outFun (Q.Return (Just reg)) = do
     fetchVal outFun reg "rax"
-    outFun "lea rdx, [rbp - 16]"
-    outFun "mov [rdx], rax"
     outFun "mov rsp, rbp"
     outFun "pop rbp"
+    outFun "lea rdx, [rbp + 16]"
+    outFun "mov [rdx], rax"
     outFun "ret"
 
 getRegistersFun :: ([Q.Block], [String]) -> [String]

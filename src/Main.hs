@@ -10,6 +10,7 @@ import System.Exit
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Except
+import System.Process
 
 import Parsing.ErrM
 import Parsing.LexLatte
@@ -20,6 +21,9 @@ import AsmBackend
 
 fileToS :: FilePath -> FilePath
 fileToS fileName = dropExtension fileName ++ ".s"
+
+fileToO :: FilePath -> FilePath
+fileToO fileName = dropExtension fileName ++ ".o"
 
 printErrorAndExit :: (Position, String) -> IO a
 printErrorAndExit (Just (row, col), err) = do
@@ -40,9 +44,13 @@ runFullCompile filename = do
                 Right p@(Program _ _ _) -> do
                     hPutStrLn stderr $ "OK"
                     let outfilename = fileToS filename
+                    let objectFilename = fileToO filename
+                    let execFilename = dropExtension filename
                     writeFile outfilename ""
                     let outFun = appendFile outfilename
                     generateAssembly outFun (getQuadsProg p)
+                    callCommand $ "nasm -g -f elf64 " ++ outfilename
+                    callCommand $ "gcc " ++ objectFilename ++ " libs/runtime.o libs/calls.o -o " ++ execFilename
         Bad e -> printErrorAndExit (Nothing, e)
 
 main :: IO ()

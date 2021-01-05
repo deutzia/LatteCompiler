@@ -22,46 +22,46 @@ extern _lat_main
 
 _stradd:
     mov r12, rsp
-    lea rdx, [rsp - 16]
+    lea rdx, [rsp + 16]
     mov rdi, [rdx]
-    lea rdx, [rsp - 24]
+    lea rdx, [rsp + 24]
     mov rsi, [rdx]
     and rsp, 0xFFFFFFFFFFFF0000
     call __stradd
     mov rsp, r12
-    lea r12, [rsp - 8]
+    lea r12, [rsp + 8]
     mov [r12], rax
     ret
 
 _strcmp:
     mov r12, rsp
-    lea rdx, [rsp - 16]
+    lea rdx, [rsp + 16]
     mov rdi, [rdx]
-    lea rdx, [rsp - 24]
+    lea rdx, [rsp + 24]
     mov rsi, [rdx]
     and rsp, 0xFFFFFFFFFFFF0000
     call __strcmp
     mov rsp, r12
-    lea r12, [rsp - 8]
+    lea r12, [rsp + 8]
     mov [r12], rax
     ret
 
 _strncmp:
     mov r12, rsp
-    lea rdx, [rsp - 16]
+    lea rdx, [rsp + 16]
     mov rdi, [rdx]
-    lea rdx, [rsp - 24]
+    lea rdx, [rsp + 24]
     mov rsi, [rdx]
     and rsp, 0xFFFFFFFFFFFF0000
     call __strncmp
     mov rsp, r12
-    lea r12, [rsp - 8]
+    lea r12, [rsp + 8]
     mov [r12], rax
     ret
 
 printInt:
     mov r12, rsp
-    lea rdx, [rsp - 16]
+    lea rdx, [rsp + 16]
     mov rdi, [rdx]
     and rsp, 0xFFFFFFFFFFFF0000
     call _printInt
@@ -70,7 +70,7 @@ printInt:
 
 printString:
     mov r12, rsp
-    lea rdx, [rsp - 16]
+    lea rdx, [rsp + 16]
     mov rdi, [rdx]
     and rsp, 0xFFFFFFFFFFFF0000
     call _printString
@@ -82,7 +82,7 @@ readInt:
     and rsp, 0xFFFFFFFFFFFF0000
     call _readInt
     mov rsp, r12
-    lea r12, [rsp - 8]
+    lea r12, [rsp + 8]
     mov [r12], rax
     ret
 
@@ -91,12 +91,12 @@ readString:
     and rsp, 0xFFFFFFFFFFFF0000
     call _readString
     mov rsp, r12
-    lea r12, [rsp - 8]
+    lea r12, [rsp + 8]
     mov [r12], rax
     ret
 
 main:
-    add rsp, 8 ; prepare space for returned value
+    sub rsp, 8 ; prepare space for returned value
     call _lat_main
     pop rax
     ret
