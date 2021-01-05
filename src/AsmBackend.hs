@@ -15,8 +15,15 @@ type GenM = ReaderT (M.Map String Int) IO
 prefix :: String
 prefix =
     "bits 64\n" ++
-    "default rel\n" ++
+    "default rel\n\n" ++
     "global _lat_main\n\n" ++
+    "extern _stradd\n" ++
+    "extern _strcmp\n" ++
+    "extern _strncmp\n" ++
+    "extern printInt\n" ++
+    "extern printString\n" ++
+    "extern readInt\n" ++
+    "extern readString\n\n" ++
     "section .data\n"
 
 wrapOut :: (String -> a) -> String -> a
@@ -55,7 +62,7 @@ writeVal _ (Q.Str _) _ = undefined
 generateData :: Q.StrEnv -> String
 generateData strenv =
     let pairs = M.toList strenv in
-    let strs = map (\(contents, name) -> name ++ " db " ++ contents ++ "\0\n") pairs in
+    let strs = map (\(contents, name) -> name ++ " db " ++ contents ++ ", 0\n") pairs in
     concat strs
 
 generateAssembly :: (String -> IO ()) -> ([([Q.Block], [String])], Q.StrEnv) -> IO ()
@@ -177,10 +184,10 @@ generateAssemblyBEnd outFun (Q.Return Nothing) = do
     outFun "ret"
 generateAssemblyBEnd outFun (Q.Return (Just reg)) = do
     fetchVal outFun reg "rax"
-    outFun "mov rsp, rbp"
-    outFun "pop rbp"
     outFun "lea rdx, [rbp + 16]"
     outFun "mov [rdx], rax"
+    outFun "mov rsp, rbp"
+    outFun "pop rbp"
     outFun "ret"
 
 getRegistersFun :: ([Q.Block], [String]) -> [String]
