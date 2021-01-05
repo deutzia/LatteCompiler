@@ -62,7 +62,14 @@ writeVal _ (Q.Str _) _ = undefined
 generateData :: Q.StrEnv -> String
 generateData strenv =
     let pairs = M.toList strenv in
-    let strs = map (\(contents, name) -> name ++ " db " ++ contents ++ ", 0\n") pairs in
+    let
+        strs = map
+            (\(contents, name) ->
+                if not (null contents)
+                    then name ++ " db " ++ contents ++ ", 0\n"
+                    else name ++ " db 0\n")
+            pairs
+    in
     concat strs
 
 generateAssembly :: (String -> IO ()) -> ([([Q.Block], [String])], Q.StrEnv) -> IO ()
@@ -71,7 +78,7 @@ generateAssembly outFun (funs, strenv) = do
     foldM
         (\() (fun, args) ->
             let regs = getRegistersFun (fun, args) in
-            let (maxOffset, regsEnv) = foldl (\(n, acc) reg -> (n + 8, M.insert reg n acc)) (0, M.empty) regs in
+            let (maxOffset, regsEnv) = foldl (\(n, acc) reg -> (n + 8, M.insert reg n acc)) (8, M.empty) regs in
             let (_, regsEnv') = foldl(\(n, acc) reg -> (n + 8, M.insert reg (-n) acc)) (0, regsEnv) args in
             runReaderT (generateAssemblyFun (liftIO . outFun) maxOffset fun) regsEnv'
         )
@@ -176,7 +183,7 @@ generateAssemblyBEnd outFun (Q.UnconditionalJump label) =
 generateAssemblyBEnd outFun (Q.ConditionalJump cond label1 label2) = do
     fetchVal outFun cond "rax"
     outFun $ "cmp rax, 0"
-    outFun $ "jeq " ++ label2
+    outFun $ "je " ++ label2
     outFun $ "jmp " ++ label1
 generateAssemblyBEnd outFun (Q.Return Nothing) = do
     outFun "mov rsp, rbp"

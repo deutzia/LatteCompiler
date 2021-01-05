@@ -20,7 +20,7 @@ data Quadruple
     | GetVar Location F.Ident
     | AssignVar F.Ident Location
     deriving Show
-data Block = Block Label [Quadruple] BlockEnd
+data Block = Block Label [Quadruple] BlockEnd deriving Show
 
 data Op
     = Add
@@ -80,7 +80,7 @@ getQuadsFunDefs = mapM getQuadsFunDef
 getQuadsFunDef :: F.FunDef -> QuadM ([Block], [String])
 getQuadsFunDef (F.FunDef _ _ name args body) = do
     (lastLabel, quads, blocks) <- getQuadsBlock (name, [], []) body
-    let argNames = map (\(_, _, name) -> name) args
+    let argNames = map (\(_, _, argName) -> argName) args
     return (reverse $
         (Block lastLabel (reverse quads) (Return Nothing)) : blocks, argNames)
 

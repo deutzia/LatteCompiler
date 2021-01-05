@@ -323,25 +323,29 @@ pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
 
 
 -- throw an error if we can't declare a particular variable
-checkdecl :: Position -> Ident -> Type -> Pass1M ()
+checkdecl :: Position -> Ident -> Type -> Pass1M Ident
 checkdecl pos ident t = do
     varName <- createVarName
     (venv, depth, seed) <- get
     case M.lookup ident venv of
-        Nothing -> put (M.insert ident (t, depth, varName) venv, depth, seed)
+        Nothing -> do
+            put (M.insert ident (t, depth, varName) venv, depth, seed)
+            return varName
         Just (_, depth', _) -> if depth' < depth
-            then put (M.insert ident (t, depth, varName) venv, depth, seed)
-        else throwError (pos, ident ++ " has already been declared")
+            then do
+                put (M.insert ident (t, depth, varName) venv, depth, seed)
+                return varName
+            else throwError (pos, ident ++ " has already been declared")
 pass1Item :: Type -> Abs.Item Position -> Pass1M Item
 pass1Item t (Abs.NoInit pos (Abs.Ident ident)) = do
-    checkdecl pos ident t
+    varName <- checkdecl pos ident t
     case t of
-        Int -> return $ Item pos ident (ELitInt pos 0)
-        Bool -> return $ Item pos ident (ELitBool pos False)
-        String_ -> return $ Item pos ident (EString pos "")
+        Int -> return $ Item pos varName (ELitInt pos 0)
+        Bool -> return $ Item pos varName (ELitBool pos False)
+        String_ -> return $ Item pos varName (EString pos "")
         Void -> throwError  (pos, "cannot declare variables of type void")
-        Class _ -> return $ Item pos ident (ECoerce pos t)
-        Array _ -> return $ Item pos ident (ECoerce pos t)
+        Class _ -> return $ Item pos varName (ECoerce pos t)
+        Array _ -> return $ Item pos varName (ECoerce pos t)
 pass1Item t (Abs.Init pos (Abs.Ident ident) expr) = do
     expr' <- pass1Expr expr
     canAssign <- isAssignable (typeOfExpr expr') t
@@ -350,8 +354,8 @@ pass1Item t (Abs.Init pos (Abs.Ident ident) expr) = do
             (pos, "cannot assign value of type " ++ show (typeOfExpr expr') ++
              " to variable of type " ++ show t)
         else do
-            checkdecl pos ident t
-            return $ Item pos ident expr'
+            varName <- checkdecl pos ident t
+            return $ Item pos varName expr'
 
 notLvalue :: Position -> String -> Pass1M a
 notLvalue p s = throwError (p, s ++ " cannot be used as lvalue")
