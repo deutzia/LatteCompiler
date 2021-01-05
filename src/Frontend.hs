@@ -190,7 +190,7 @@ pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
     (_, _, seed') <- get
     put (oldVenv, depth, seed')
     if checkReturnBlock body' /= RSUnknown || t' == Void
-        then return $ FunDef pos t' name args' body'
+        then return $ FunDef pos t' ("_lat_" ++ name) args' body'
         else throwError
             (pos, "function returning non-void doesn't have a return")
 
