@@ -49,7 +49,8 @@ char* _readString()
     char* res = NULL;
     size_t len = 0;
     getline(&res, &len, stdin);
-    res[len] = 0;
+    len = strlen(res);
+    res[len - 1] = 0;
     return res;
 }
 

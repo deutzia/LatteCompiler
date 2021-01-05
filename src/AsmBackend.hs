@@ -24,7 +24,7 @@ prefix =
     "extern printString\n" ++
     "extern readInt\n" ++
     "extern readString\n\n" ++
-    "section .data\n"
+    "section .rodata\n"
 
 wrapOut :: (String -> a) -> String -> a
 wrapOut f = \s -> f $ "    " ++ s ++ "\n"
@@ -43,7 +43,7 @@ fetchVal outFun (Q.Reg name) reg = fetchValReg outFun name reg
 fetchVal outFun (Q.Literal n) reg =
     outFun $ "mov " ++ reg ++ ", " ++ show n
 fetchVal outFun (Q.Str name) reg =
-    outFun $ "mov " ++ reg ++ ", [" ++ name ++ "]"
+    outFun $ "mov " ++ reg ++ ", " ++ name
 
 writeValReg :: (String -> GenM ()) -> String -> String -> GenM ()
 writeValReg outFun name reg = do
