@@ -2,8 +2,7 @@
 
 echo "testing directory " $1
 for input in $1/*.lat ; do
-    ./latc_x86_64 $input
-    if true
+    if ./latc_x86_64 $input
     then
         exe=$1/$(basename $input .lat)
         in=$exe.input
