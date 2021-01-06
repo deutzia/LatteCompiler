@@ -21,3 +21,20 @@ cases it never returns).
 Classes: accessing fields and methods from methods of the class is possible both
 without a modifier and using `self`.
 
+Code generation assumptions: generated code is x86_64 assembly, which is then
+assembled using nasm.
+
+Even though int in Java has 32 bits, I decided to go for 64-bit ints. This
+simplified code generation and I think it's reasonable, since my target
+architecture is 64-bit anyway.
+
+Calling convention is: all the arguments are on the stack, and the return value
+is also returned on the stack, all of that space is allocated by caller.
+Registers are not saved, because all the variables are on the stack anyway (I
+plan to change it in the next iteration).
+
+Due to different calling convention than in C, additional layer of translation
+between latc generated code and linked C code is needed, therefore libs/ contain
+not only the runtime.c with implementation of standard function, but also
+calls.asm, which traslates from one calling convention to another.
+
