@@ -5,6 +5,7 @@ module Frontend where
 import qualified Data.Map as M
 import qualified Data.Graph as G
 import qualified Data.Set as S
+import qualified Data.Maybe as Maybe
 import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Reader
@@ -178,19 +179,21 @@ pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
         )
         S.empty
         args'
-    (oldVenv, depth, seed) <- get
+    (oldVenv, depth, _) <- get
     envModL <- mapM (\(_, type_, ident) -> do
             tmpName <- createVarName
             return (ident, (type_, depth, tmpName))) args'
     let envModification = M.fromList envModL
     let newVenv = M.union envModification oldVenv
+    (_, _, seed) <- get
     put (newVenv, depth + 1, seed)
+    let args'' = map (\(p, t, ident) -> let (_, _, tmpName) = Maybe.fromJust (M.lookup ident envModification) in (p, t, tmpName)) args'
     body' <- local
         (\(fenv, cenv, _, c) -> (fenv, cenv, t', c)) (pass1Block body)
     (_, _, seed') <- get
     put (oldVenv, depth, seed')
     if checkReturnBlock body' /= RSUnknown || t' == Void
-        then return $ FunDef pos t' ("_lat_" ++ name) args' body'
+        then return $ FunDef pos t' ("_lat_" ++ name) args'' body'
         else throwError
             (pos, "function returning non-void doesn't have a return")
 
@@ -609,11 +612,7 @@ pass1Expr (Abs.EAdd pos e1 addop e2) =
                     throwError
                         (getPosAdd addop,
                         "type mismatch - both operands should be integers")
-                Abs.Plus _ -> do
-                    case (e1', e2') of
-                        (EString _ n, EString _ m) ->
-                            return $ EString pos (n ++ m)
-                        _ -> return $ EIntOp String_ pos e1' Add e2'
+                Abs.Plus _ -> return $ EIntOp String_ pos e1' Add e2'
         _ -> throwError
             (getPosAdd addop,
             "type mismatch - both operands should be integers")
@@ -662,15 +661,15 @@ pass1Expr (Abs.ERel pos e1 relop e2) =
                 _ -> mismatchIntegers
         Abs.LE _ ->
             case (typee1, typee2) of
-                (Int, Int) -> createERelInt (<=) Lth
+                (Int, Int) -> createERelInt (<=) Le
                 _ -> mismatchIntegers
         Abs.GTH _ ->
             case (typee1, typee2) of
-                (Int, Int) -> createERelInt (>) Lth
+                (Int, Int) -> createERelInt (>) Gth
                 _ -> mismatchIntegers
         Abs.GE _ ->
             case (typee1, typee2) of
-                (Int, Int) -> createERelInt (>=) Lth
+                (Int, Int) -> createERelInt (>=) Ge
                 _ -> mismatchIntegers
         Abs.EQU _ ->
             case (typee1, typee2) of

@@ -29,13 +29,17 @@ prefix =
 wrapOut :: (String -> a) -> String -> a
 wrapOut f = \s -> f $ "    " ++ s ++ "\n"
 
+-- negated sign
+nsgn :: Int -> String
+nsgn x = if x >= 0 then "- " ++ show x else "+ " ++ show (-x)
+
 fetchValReg :: (String -> GenM ()) -> String -> String -> GenM ()
 fetchValReg outFun name reg = do
     regenv <- ask
     case M.lookup name regenv of
         Nothing -> undefined
         Just offset -> do
-            outFun $ "lea r8, [rbp - " ++ show offset ++ "]"
+            outFun $ "lea r8, [rbp " ++ nsgn offset ++ "]"
             outFun $ "mov " ++ reg ++ ", [r8]"
 
 fetchVal :: (String -> GenM ()) -> Q.Location -> String -> GenM ()
@@ -51,7 +55,7 @@ writeValReg outFun name reg = do
     case M.lookup name regenv of
         Nothing -> undefined
         Just offset -> do
-            outFun $ "lea r8, [rbp - " ++ show offset ++ "]"
+            outFun $ "lea r8, [rbp " ++ nsgn offset ++ "]"
             outFun $ "mov [r8], " ++ reg
 
 writeVal :: (String -> GenM ()) -> Q.Location -> String -> GenM ()
@@ -79,7 +83,7 @@ generateAssembly outFun (funs, strenv) = do
         (\() (fun, args) ->
             let regs = getRegistersFun (fun, args) in
             let (maxOffset, regsEnv) = foldl (\(n, acc) reg -> (n + 8, M.insert reg n acc)) (8, M.empty) regs in
-            let (_, regsEnv') = foldl(\(n, acc) reg -> (n + 8, M.insert reg (-n) acc)) (0, regsEnv) args in
+            let (_, regsEnv') = foldl(\(n, acc) reg -> (n + 8, M.insert reg (-n) acc)) (24, regsEnv) args in
             runReaderT (generateAssemblyFun (liftIO . outFun) maxOffset fun) regsEnv'
         )
         ()
