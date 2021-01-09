@@ -56,7 +56,7 @@ writeValReg outFun name reg = do
         Nothing -> undefined
         Just offset -> do
             outFun $ "lea r8, [rbp " ++ nsgn offset ++ "]"
-            outFun $ "mov [r8], " ++ reg
+            outFun $ "mov qword [r8], " ++ reg
 
 writeVal :: (String -> GenM ()) -> Q.Location -> String -> GenM ()
 writeVal outFun (Q.Reg name) reg = writeValReg outFun name reg
@@ -128,36 +128,6 @@ generateAssemblyQuad outFun () (Q.Quadruple r1 op r2 r3) = do
             outFun "cqo"
             outFun "idiv rsi"
             writeVal outFun r1 "rdx"
-        Q.Lth -> do
-            outFun "xor rdx, rdx"
-            outFun "cmp rax, rsi"
-            outFun "setl dl"
-            writeVal outFun r1 "rdx"
-        Q.Le -> do
-            outFun "xor rdx, rdx"
-            outFun "cmp rax, rsi"
-            outFun "setle dl"
-            writeVal outFun r1 "rdx"
-        Q.Gth -> do
-            outFun "xor rdx, rdx"
-            outFun "cmp rax, rsi"
-            outFun "setg dl"
-            writeVal outFun r1 "rdx"
-        Q.Ge -> do
-            outFun "xor rdx, rdx"
-            outFun "cmp rax, rsi"
-            outFun "setge dl"
-            writeVal outFun r1 "rdx"
-        Q.Equ -> do
-            outFun "xor rdx, rdx"
-            outFun "cmp rax, rsi"
-            outFun "sete dl"
-            writeVal outFun r1 "rdx"
-        Q.Neq -> do
-            outFun "xor rdx, rdx"
-            outFun "cmp rax, rsi"
-            outFun "setne dl"
-            writeVal outFun r1 "rdx"
 generateAssemblyQuad outFun () (Q.Call r1 name args) =
     let offset = length args + 1 in do
     outFun $ "sub rsp, " ++ show (offset * 8)
@@ -180,15 +150,29 @@ generateAssemblyQuad outFun () (Q.GetVar r1 r2) = do
 generateAssemblyQuad outFun () (Q.AssignVar r1 r2) = do
     fetchVal outFun r2 "rax"
     writeValReg outFun r1 "rax"
+generateAssemblyQuad outFun () (Q.AssignLocal reg n) =
+    writeVal outFun reg (show n)
 
 generateAssemblyBEnd :: (String -> GenM ()) -> Q.BlockEnd -> GenM ()
 generateAssemblyBEnd outFun (Q.UnconditionalJump label) =
     outFun $ "jmp " ++ label
-generateAssemblyBEnd outFun (Q.ConditionalJump cond label1 label2) = do
+generateAssemblyBEnd outFun (Q.ConditionalJump (Q.Loc cond) label1 label2) = do
     fetchVal outFun cond "rax"
     outFun $ "cmp rax, 0"
     outFun $ "je " ++ label2
     outFun $ "jmp " ++ label1
+generateAssemblyBEnd outFun (Q.ConditionalJump (Q.Rel op loc1 loc2) label1 label2) = do
+    fetchVal outFun loc1 "rax"
+    fetchVal outFun loc2 "rdx"
+    outFun "cmp rax, rdx"
+    case op of
+        Q.Lth -> outFun $ "jl " ++ label1
+        Q.Le -> outFun $ "jle " ++ label1
+        Q.Gth -> outFun $ "jg " ++ label1
+        Q.Ge -> outFun $ "jge " ++ label1
+        Q.Equ -> outFun $ "je " ++ label1
+        Q.Neq -> outFun $ "jne " ++ label1
+    outFun $ "jmp "  ++ label2
 generateAssemblyBEnd outFun (Q.Return Nothing) = do
     outFun "mov rsp, rbp"
     outFun "pop rbp"
@@ -219,11 +203,14 @@ getRegistersQuad regs (Q.GetVar r1 r2) =
     S.insert r2 (addLocationToRegisters r1 regs)
 getRegistersQuad regs (Q.AssignVar r1 r2) =
     S.insert r1 (addLocationToRegisters r2 regs)
+getRegistersQuad regs (Q.AssignLocal reg _) = addLocationToRegisters reg regs
 
 getRegistersBEnd :: S.Set String -> Q.BlockEnd -> S.Set String
 getRegistersBEnd regs (Q.UnconditionalJump _) = regs
-getRegistersBEnd regs (Q.ConditionalJump reg _ _) =
+getRegistersBEnd regs (Q.ConditionalJump (Q.Loc reg) _ _) =
     addLocationToRegisters reg regs
+getRegistersBEnd regs (Q.ConditionalJump (Q.Rel _ r1 r2) _ _) =
+    addLocationToRegisters r1 (addLocationToRegisters r2 regs)
 getRegistersBEnd regs (Q.Return Nothing) = regs
 getRegistersBEnd regs (Q.Return (Just reg)) = addLocationToRegisters reg regs
 

@@ -612,7 +612,7 @@ pass1Expr (Abs.EAdd pos e1 addop e2) =
                     throwError
                         (getPosAdd addop,
                         "type mismatch - both operands should be integers")
-                Abs.Plus _ -> return $ EIntOp String_ pos e1' Add e2'
+                Abs.Plus _ -> return $ EApp String_ pos "_stradd" [e1', e2']
         _ -> throwError
             (getPosAdd addop,
             "type mismatch - both operands should be integers")
@@ -635,10 +635,10 @@ pass1Expr (Abs.ERel pos e1 relop e2) =
             (ELitInt _ n, ELitInt _ m) -> return $ ELitBool pos (f n m)
             _ -> return $ ERel pos e1' op e2'
     }
-    let createERelString f op = do {
+    let createERelString f fname = do {
         case (e1', e2') of
             (EString _ n, EString _ m) -> return $ ELitBool pos (f n m)
-            _ -> return $ ERel pos e1' op e2'
+            _ -> return $ EApp String_ pos fname [e1', e2']
     }
     let createERelBool f op = do {
         case (e1', e2') of
@@ -674,7 +674,7 @@ pass1Expr (Abs.ERel pos e1 relop e2) =
         Abs.EQU _ ->
             case (typee1, typee2) of
                 (Int, Int) -> createERelInt (==) Equ
-                (String_, String_) -> createERelString (==) Equ
+                (String_, String_) -> createERelString (==) "_strcmp"
                 (Bool, Bool) -> createERelBool (==) Equ
                 (Array t1, Array t2) -> if t1 == t2
                     then createERelOther Equ
@@ -686,7 +686,7 @@ pass1Expr (Abs.ERel pos e1 relop e2) =
         Abs.NE _ ->
             case (typee1, typee2) of
                 (Int, Int) -> createERelInt (/=) Neq
-                (String_, String_) -> createERelString (/=) Neq
+                (String_, String_) -> createERelString (/=) "_strncmp"
                 (Bool, Bool) -> createERelBool (/=) Neq
                 (Array t1, Array t2) -> if t1 == t2
                     then createERelOther Neq
