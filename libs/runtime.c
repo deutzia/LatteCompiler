@@ -54,3 +54,7 @@ char* _readString()
     return res;
 }
 
+void* _allocate(size_t size)
+{
+    return calloc(size, 1);
+}

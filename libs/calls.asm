@@ -9,6 +9,7 @@ global printString
 global readInt
 global readString
 global main
+global allocate
 
 extern __stradd
 extern __stardd
@@ -19,6 +20,7 @@ extern _printString
 extern _readInt
 extern _readString
 extern _lat_main
+extern _allocate
 
 _stradd:
     mov r12, rsp
@@ -99,5 +101,16 @@ main:
     sub rsp, 8 ; prepare space for returned value
     call _lat_main
     pop rax
+    ret
+
+allocate:
+    mov r12, rsp
+    lea rdx, [rsp + 16]
+    mov rdi, [rdx]
+    and rsp, 0xFFFFFFFFFFFF0000
+    call _allocate
+    mov rsp, r12
+    lea r12, [rsp + 8]
+    mov [r12], rax
     ret
 
