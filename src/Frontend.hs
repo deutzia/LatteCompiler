@@ -166,10 +166,14 @@ pass1Type (Abs.BltinType _ t) = return (pass1BuiltinType t)
 pass1Type (Abs.ArrType _ t) = pass1ArrayType t
 pass1Type (Abs.UserType pos (Abs.Ident ident)) = pass1ClassType ident pos
 
-pass1FunDef :: Abs.FunDef Position -> Pass1M FunDef
-pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
+-- first arg is maybe class name to add `this` to args
+pass1FunDef :: (Maybe Ident) -> Abs.FunDef Position -> Pass1M FunDef
+pass1FunDef maybeClass (Abs.FunDef pos t (Abs.Ident name) args body) = do
     t' <- pass1Type t
-    args' <- mapM pass1Arg args
+    args_ <- mapM pass1Arg args
+    let args' = case maybeClass of
+            Nothing -> args_
+            Just className -> (pos, (Class className), "this") : args_
     foldM_
         (\vars (p, _, ident) ->
             if S.member ident vars
@@ -187,7 +191,7 @@ pass1FunDef (Abs.FunDef pos t (Abs.Ident name) args body) = do
     let newVenv = M.union envModification oldVenv
     (_, _, seed) <- get
     put (newVenv, depth + 1, seed)
-    let args'' = map (\(p, t, ident) -> let (_, _, tmpName) = Maybe.fromJust (M.lookup ident envModification) in (p, t, tmpName)) args'
+    let args'' = map (\(p, type_, ident) -> let (_, _, tmpName) = Maybe.fromJust (M.lookup ident envModification) in (p, type_, tmpName)) args'
     body' <- local
         (\(fenv, cenv, _, c) -> (fenv, cenv, t', c)) (pass1Block body)
     (_, _, seed') <- get
@@ -408,7 +412,14 @@ ressolveVariable pos varIdent classIdent = do
     case M.lookup classIdent cenv of
         Nothing -> undefined
         Just (fields, _, parent) -> case M.lookup varIdent fields of
-            Just t -> return $ EVar t pos varIdent
+            Just t -> do
+                (venv, _, _) <- get
+                let (thisType, _, _) = Maybe.fromJust $ M.lookup "this"  venv
+                return $ EClassField
+                        t
+                        pos
+                        (EVar thisType pos "this")
+                        varIdent
             Nothing -> case parent of
                 Nothing -> undeclaredIdentifier pos varIdent
                 Just parentIdent -> ressolveVariable pos varIdent parentIdent
@@ -478,17 +489,21 @@ pass1Expr (Abs.EClassArrCoerce pos t) = do
     return $ ECoerce pos t'
 pass1Expr (Abs.EApp pos (Abs.Ident funIdent) args) = do
     (fenv, _, _, _) <- ask
-    (retType, argTypes, tmpName) <- case M.lookup funIdent fenv of
+    ((retType, argTypes, tmpName), maybeThis) <- case M.lookup funIdent fenv of
         Nothing ->  do
             (_, _, _, className) <- ask
             case className of
                 Nothing -> undeclaredFunction pos funIdent
-                Just classIdent -> ressolveFunction pos funIdent classIdent
-        Just t -> return t
+                Just classIdent -> do
+                        t <- ressolveFunction pos funIdent classIdent
+                        return (t, Just (EVar (Class classIdent) pos "this"))
+        Just t -> return (t, Nothing)
     args' <- mapM pass1Expr args
     let argTypes' = map typeOfExpr args'
     checkFArgs pos funIdent argTypes' argTypes
-    return $ EApp retType pos tmpName args'
+    case maybeThis of
+        Just this -> return $ EClassMethod retType pos this tmpName args'
+        Nothing -> return $ EApp retType pos tmpName args'
 pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
     classExpr' <- pass1Expr classExpr
     case typeOfExpr classExpr' of
@@ -851,7 +866,7 @@ pass1Classes classes classesExt =
                 attrs
             methods <- local
                 (\(fenv, cenv, type_, _) -> (fenv, cenv, type_, Just className))
-                (mapM pass1FunDef fns)
+                (mapM (pass1FunDef (Just className)) fns)
             (_, _, seed') <- get
             put (oldVenv, depth, seed')
             return $ ClassDef pos className Nothing fields methods
@@ -872,7 +887,8 @@ pass1Classes classes classesExt =
                 (\(fenv, cenv, type_, _) ->
                     (fenv, cenv, type_, Just className))
                 (mapM (\fn -> do
-                    fn'@(FunDef _ retType funIdent args _) <- pass1FunDef fn
+                    fn'@(FunDef _ retType funIdent args _) <- (pass1FunDef
+                            (Just className)) fn
                     parentType <- catchError
                         (Just <$> ressolveFunction pos funIdent parentName)
                         (\_ -> return Nothing)
@@ -932,7 +948,7 @@ pass1 (Abs.Program p tlds) =
         fundefs' <-
             local
                 (const (fenv, cenv, Void, Nothing))
-                (mapM pass1FunDef fundefs)
+                (mapM (pass1FunDef Nothing) fundefs)
         classdefs <-
             local
                  (const (fenv, cenv, Void, Nothing))
