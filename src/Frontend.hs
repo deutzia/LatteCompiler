@@ -48,13 +48,10 @@ data Stmt
     | BStmt Position Block
     | Decl Position Type [Item]
     | Ass Position Lvalue Expr
-    | Incr Position Lvalue
-    | Decr Position Lvalue
     | Ret Position (Maybe Expr)
     | Cond Position Expr Stmt (Maybe Stmt)
     | While Position Expr Stmt
     | SExp Position Expr
-    | For Position Ident Expr Stmt
     deriving Show
 data Item = Item Position Ident Expr deriving Show
 -- position and type are kept for every nonobvious expression and lvalue
@@ -119,8 +116,6 @@ checkReturnStmt stmt =
         BStmt _ block -> checkReturnBlock block
         Decl{} -> RSUnknown
         Ass{} -> RSUnknown
-        Incr{} -> RSUnknown
-        Decr{} -> RSUnknown
         Ret{} -> RSYes
         Cond _ _ s1 (Just s2) ->
             let
@@ -140,7 +135,6 @@ checkReturnStmt stmt =
         While{} -> RSUnknown
         SExp _ (EApp _ _ "error" _) -> RSNever
         SExp{} -> RSUnknown
-        For{} -> RSUnknown
 
 pass1BuiltinType :: Abs.BuiltinType Position -> Type
 pass1BuiltinType (Abs.Int _) = Int
@@ -249,8 +243,14 @@ pass1Stmt (Abs.Ass pos e1 e2) = do
             (pos,
             "cannot assign expression of type " ++ show (typeOfExpr expr) ++
             " to variable of type " ++ show (typeOfLvalue lval))
-pass1Stmt (Abs.Incr pos expr) = Incr pos <$> (pass1Expr expr >>= getLvalue)
-pass1Stmt (Abs.Decr pos expr) = Decr pos <$> (pass1Expr expr >>= getLvalue)
+pass1Stmt (Abs.Incr pos expr) = do
+    expr' <- pass1Expr expr
+    lval <- getLvalue expr'
+    return (Ass pos lval (EIntOp Int pos expr' Add (ELitInt pos 1)))
+pass1Stmt (Abs.Decr pos expr) = do
+    expr' <- pass1Expr expr
+    lval <- getLvalue expr'
+    return (Ass pos lval (EIntOp Int pos expr' Sub (ELitInt pos 1)))
 pass1Stmt (Abs.Ret pos expr) = do
     expr' <- pass1Expr expr
     (_, _, retType, _) <- ask
@@ -308,16 +308,45 @@ pass1Stmt (Abs.For pos t (Abs.Ident ident) iterable body) =
     case typeOfExpr iter' of
         Array iterType -> if t' == iterType
             then do
-                varName <- createVarName
                 (oldVenv, depth, seed) <- get
+                iterItem@(Item _ iterName _) <-
+                    pass1Item iterType (Abs.NoInit pos (Abs.Ident ident))
+                countName <- createVarName
                 put
-                    (M.insert ident (iterType, depth, varName) oldVenv,
+                    (M.insert ident (iterType, depth, iterName) oldVenv,
                         depth + 1,
                         seed)
                 body' <- pass1Stmt body
                 (_, _, seed') <- get
                 put (oldVenv, depth, seed')
-                return (For pos ident iter' body')
+                let countDecl =
+                        Decl pos Int [Item pos countName (ELitInt pos 0)]
+                let iterDecl = Decl pos iterType [iterItem]
+                let whileCond =
+                        ERel
+                            pos
+                            (EVar Int pos countName)
+                            Lth
+                            (EClassField Int pos iter' "length")
+                let assignIter =
+                        Ass
+                            pos
+                            (VarRef iterType pos iterName)
+                            (EArrAt iterType pos iter' (EVar Int pos countName))
+                let incrCount =
+                        Ass
+                            pos
+                            (VarRef Int pos countName)
+                            (EIntOp
+                                Int
+                                pos
+                                (EVar Int pos countName)
+                                Add
+                                (ELitInt pos 1))
+                let whileBody =
+                        BStmt pos $ Block pos [assignIter, body', incrCount]
+                let whileStmt = While pos whileCond whileBody
+                return $ BStmt pos $ Block pos [countDecl, iterDecl, whileStmt]
             else throwError
                 (pos,
                 "type mismatch in for: can't iterate over array of " ++
@@ -546,7 +575,7 @@ pass1Expr (Abs.EClassField pos classExpr (Abs.Ident fieldIdent)) = do
                                 EClassField fieldType pos classExpr' fieldIdent
         Array _ -> if fieldIdent /= "length"
             then throwError
-                (pos, "array has no member " ++ fieldIdent ++ ", oly length")
+                (pos, "array has no member " ++ fieldIdent ++ ", only length")
             else return $ EClassField Int pos classExpr' fieldIdent
         _ -> throwError
             (pos,

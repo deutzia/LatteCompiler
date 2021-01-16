@@ -23,7 +23,8 @@ prefix =
     "extern printInt\n" ++
     "extern printString\n" ++
     "extern readInt\n" ++
-    "extern readString\n\n" ++
+    "extern readString\n" ++
+    "extern allocate\n\n" ++
     "section .rodata\n"
 
 wrapOut :: (String -> a) -> String -> a
@@ -150,8 +151,23 @@ generateAssemblyQuad outFun () (Q.GetVar r1 r2) = do
 generateAssemblyQuad outFun () (Q.AssignVar r1 r2) = do
     fetchVal outFun r2 "rax"
     writeValReg outFun r1 "rax"
-generateAssemblyQuad outFun () (Q.AssignLocal reg n) =
+generateAssemblyQuad outFun () (Q.AssignLocal reg (Q.Literal n)) =
     writeVal outFun reg (show n)
+generateAssemblyQuad outFun () (Q.AssignLocal r1 r2) = do
+    fetchVal outFun r2 "rax"
+    writeVal outFun r1 "rax"
+generateAssemblyQuad outFun () (Q.ReadPtr r1 r2 r3) = do
+    fetchVal outFun r2 "rax"
+    fetchVal outFun r3 "rsi"
+    outFun $ "lea rdx, [rax + rsi * 8]"
+    outFun $ "mov rax, [rdx]"
+    writeVal outFun r1 "rax"
+generateAssemblyQuad outFun () (Q.WritePtr r1 r2 r3) = do
+    fetchVal outFun r1 "rax"
+    fetchVal outFun r2 "rsi"
+    fetchVal outFun r3 "rdx"
+    outFun $ "lea rdi, [rax + rsi * 8]"
+    outFun $ "mov [rdi], rdx"
 
 generateAssemblyBEnd :: (String -> GenM ()) -> Q.BlockEnd -> GenM ()
 generateAssemblyBEnd outFun (Q.UnconditionalJump label) =
@@ -203,7 +219,17 @@ getRegistersQuad regs (Q.GetVar r1 r2) =
     S.insert r2 (addLocationToRegisters r1 regs)
 getRegistersQuad regs (Q.AssignVar r1 r2) =
     S.insert r1 (addLocationToRegisters r2 regs)
-getRegistersQuad regs (Q.AssignLocal reg _) = addLocationToRegisters reg regs
+getRegistersQuad regs (Q.AssignLocal r1 r2) =
+    (addLocationToRegisters r1 regs)
+        F.& (addLocationToRegisters r2)
+getRegistersQuad regs (Q.WritePtr r1 r2 r3) =
+    (addLocationToRegisters r1 regs)
+        F.& (addLocationToRegisters r2)
+        F.& (addLocationToRegisters r3)
+getRegistersQuad regs (Q.ReadPtr r1 r2 r3) =
+    (addLocationToRegisters r1 regs)
+        F.& (addLocationToRegisters r2)
+        F.& (addLocationToRegisters r3)
 
 getRegistersBEnd :: S.Set String -> Q.BlockEnd -> S.Set String
 getRegistersBEnd regs (Q.UnconditionalJump _) = regs

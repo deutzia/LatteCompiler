@@ -56,5 +56,5 @@ char* _readString()
 
 void* _allocate(size_t size)
 {
-    return calloc(size, 1);
+    return calloc(size, 8);
 }
