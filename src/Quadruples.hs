@@ -304,8 +304,6 @@ getQuadsExpr triple e@(F.EBoolOp _ _ _ _) = do
     return ((newLabel, [], blockFalse : (blockTrue : blocks)), res)
 
 getQuadsBExpr :: GenTriple -> F.Expr -> Label -> Label -> QuadM [Block]
-getQuadsBExpr _ (F.ENewArr _ _ _ _) _ _ = undefined
-getQuadsBExpr _ (F.ENewObj _ _) _ _ = undefined
 getQuadsBExpr triple e@(F.EVar F.Bool _ _) labelTrue labelFalse = do
     ((label, quads, blocks), reg) <- getQuadsExpr triple e
     let block = Block
@@ -313,30 +311,14 @@ getQuadsBExpr triple e@(F.EVar F.Bool _ _) labelTrue labelFalse = do
             (reverse quads)
             (ConditionalJump (Loc reg) labelTrue labelFalse)
     return $ block : blocks
-getQuadsBExpr _ (F.EVar _ _ _) _ _ = undefined
-getQuadsBExpr _ (F.ELitInt _ _) _ _ = undefined
 getQuadsBExpr (label, quads, blocks) (F.ELitBool _ True ) labelTrue _ =
     let block = Block label (reverse quads) (UnconditionalJump labelTrue) in
     return $ block : blocks
 getQuadsBExpr (label, quads, blocks) (F.ELitBool _ False) _ labelFalse =
     let block = Block label (reverse quads) (UnconditionalJump labelFalse) in
     return $ block : blocks
-getQuadsBExpr _ (F.EString _ _) _ _ = undefined
-getQuadsBExpr _ (F.ECoerce _ _) _ _ = undefined
-getQuadsBExpr triple e@(F.EApp F.Bool _ _ _) labelTrue labelFalse = do
-    ((label, quads, blocks), reg) <- getQuadsExpr triple e
-    let block = Block
-            label
-            (reverse quads)
-            (ConditionalJump (Loc reg) labelTrue labelFalse)
-    return $ block : blocks
-getQuadsBExpr _ (F.EApp _ _ _ _) _ _ = undefined
-getQuadsBExpr _ (F.EClassMethod _ _ _ _ _) _ _ = undefined
-getQuadsBExpr _ (F.EClassField _ _ _ _) _ _ = undefined
-getQuadsBExpr _ (F.EArrAt _ _ _ _) _ _ = undefined
-getQuadsBExpr _ (F.Neg _ _) _ _ = undefined
-getQuadsBExpr triple (F.Not _ e) labelTrue labelFalse = getQuadsBExpr triple e labelFalse labelTrue
-getQuadsBExpr _ (F.EIntOp _ _ _ _ _) _ _ = undefined
+getQuadsBExpr triple (F.Not _ e) labelTrue labelFalse =
+    getQuadsBExpr triple e labelFalse labelTrue
 getQuadsBExpr triple (F.ERel _ e1 operand e2) labelTrue labelFalse = do
     (triple', reg1)  <- getQuadsExpr triple e1
     ((label, quads, blocks), reg2)  <- getQuadsExpr triple' e2
@@ -361,4 +343,10 @@ getQuadsBExpr triple (F.EBoolOp _ e1 F.Or e2) labelTrue labelFalse = do
     secondCondLabel <- getNewLabel
     blocks <- getQuadsBExpr triple e1 labelTrue secondCondLabel
     getQuadsBExpr (secondCondLabel, [], blocks) e2 labelTrue labelFalse
-
+getQuadsBExpr triple expr labelTrue labelFalse = do
+    ((label, quads, blocks), reg) <- getQuadsExpr triple expr
+    let block = Block
+            label
+            (reverse quads)
+            (ConditionalJump (Loc reg) labelTrue labelFalse)
+    return $ block : blocks
