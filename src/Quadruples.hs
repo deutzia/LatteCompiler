@@ -217,7 +217,7 @@ getQuadsExpr triple (F.ELitBool _ False) = return (triple, Literal 0)
 getQuadsExpr triple (F.EString _ s) = do
     name <- getStringName s
     return (triple, name)
-getQuadsExpr _ (F.ECoerce _ _) = undefined
+getQuadsExpr triple (F.ECoerce _ _) = return (triple, Literal 0)
 getQuadsExpr triple (F.EApp _ _ fname args) = do
     ((label, quads, blocks), args') <- foldM
         (\(t, acc) arg -> do
