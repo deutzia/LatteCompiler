@@ -97,11 +97,6 @@ setVar triple (F.ArrRef _ _ lv expr) rvalue = do
     return (label, q : add1 : quads, blocks)
 setVar _ (F.ClassAttr _ _ _ _) _ = undefined
 
---getLoc :: F.Lvalue -> QuadM F.Ident
---getLoc (F.VarRef _ _ ident) = return ident
---getLoc (F.ClassAttr _ _ _ _) = undefined
---getLoc (F.ArrRef _ _ _ _) = undefined
-
 getQuadsProg :: F.Program -> ([([Block], [String])], StrEnv)
 getQuadsProg (F.Program _ classDefs funDefs) =
     if not (null classDefs)

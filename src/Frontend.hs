@@ -36,10 +36,6 @@ data Program = Program Position [ClassDef] [FunDef] deriving Show
 data ClassDef = ClassDef Position Ident (Maybe Ident) [Field] [FunDef]
     deriving Show
 data Field = Field Position Type Ident deriving Show
-data ClassBody
-    = AttrVar Position Type Ident
-    | AttrFun Position FunDef
-    deriving Show
 data FunDef = FunDef Position Type Ident [Arg] Block deriving Show
 type Arg = (Position, Type, Ident)
 data Block = Block Position [Stmt] deriving Show
