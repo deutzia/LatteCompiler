@@ -321,6 +321,9 @@ Expr6 :: {
 | Expr6 '.' Ident {
   (fst $1, Parsing.AbsLatte.EClassField (fst $1)(snd $1)(snd $3)) 
 }
+| Expr6 '[' Expr ']' {
+  (fst $1, Parsing.AbsLatte.EArrAt (fst $1)(snd $1)(snd $3)) 
+}
 | Expr7 {
   (fst $1, snd $1)
 }
@@ -356,10 +359,7 @@ Expr7 :: {
 Expr5 :: {
   (Maybe (Int, Int), Expr (Maybe (Int, Int)))
 }
-: Expr5 '[' Expr ']' {
-  (fst $1, Parsing.AbsLatte.EArrAt (fst $1)(snd $1)(snd $3)) 
-}
-| '-' Expr6 {
+: '-' Expr6 {
   (Just (tokenLineCol $1), Parsing.AbsLatte.Neg (Just (tokenLineCol $1)) (snd $2)) 
 }
 | '!' Expr6 {
