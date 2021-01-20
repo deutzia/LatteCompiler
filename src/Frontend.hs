@@ -431,6 +431,22 @@ undeclaredIdentifier pos ident =
 undeclaredFunction :: Position -> Ident -> Pass1M a
 undeclaredFunction pos ident = throwError (pos, "undeclared function " ++ ident)
 
+undeclaredField :: Position -> Ident -> Ident -> Pass1M a
+undeclaredField pos fieldIdent classIdent =
+    throwError (pos, "class " ++ classIdent ++ " has no field " ++ fieldIdent)
+
+ressolveField :: Position -> Ident -> Ident -> Ident -> Pass1M Type
+ressolveField pos fieldIdent classIdent origClassIdent = do
+    (_, cenv, _, _) <- ask
+    case M.lookup classIdent cenv of
+        Nothing -> undefined
+        Just (fields, _, parent) -> case M.lookup fieldIdent fields of
+            Just t -> return t
+            Nothing -> case parent of
+                Nothing -> undeclaredField pos fieldIdent origClassIdent
+                Just parentIdent ->
+                        ressolveField pos fieldIdent parentIdent origClassIdent
+
 ressolveVariable :: Position -> Ident -> Ident -> Pass1M Expr
 ressolveVariable pos varIdent classIdent = do
     (_, cenv, _, _) <- ask
@@ -556,19 +572,8 @@ pass1Expr (Abs.EClassField pos classExpr (Abs.Ident fieldIdent)) = do
     classExpr' <- pass1Expr classExpr
     case typeOfExpr classExpr' of
         Class classIdent -> do
-            (_, cenv, _, _) <- ask
-            case M.lookup classIdent cenv of
-                Nothing -> throwError
-                    (pos, classIdent ++ " is not a correct class identifier")
-                Just (fields, _, _) ->
-                    case M.lookup fieldIdent fields of
-                        Nothing -> throwError
-                            (pos,
-                            "class " ++ classIdent ++ " has no field " ++
-                            fieldIdent)
-                        Just fieldType ->
-                            return $
-                                EClassField fieldType pos classExpr' fieldIdent
+            t <- ressolveField pos fieldIdent classIdent classIdent
+            return $ EClassField t pos classExpr' fieldIdent
         Array _ -> if fieldIdent /= "length"
             then throwError
                 (pos, "array has no member " ++ fieldIdent ++ ", only length")
