@@ -265,7 +265,11 @@ pass1Stmt (Abs.VRet pos) = do
         else return $ Ret pos Nothing
 pass1Stmt (Abs.Cond pos cond body) = do
     cond' <- pass1Expr cond
+    (oldVenv, depth, seed) <- get
+    put (oldVenv, depth + 1, seed)
     body' <- pass1Stmt body
+    (_, _, seed') <- get
+    put (oldVenv, depth, seed')
     case typeOfExpr cond' of
         Bool ->
             case cond' of
@@ -275,8 +279,14 @@ pass1Stmt (Abs.Cond pos cond body) = do
         _ -> throwError (pos, "condition in if statement must be boolean")
 pass1Stmt (Abs.CondElse pos cond bodyIf bodyElse) = do
     cond' <- pass1Expr cond
+    (oldVenv, depth, seed) <- get
+    put (oldVenv, depth + 1, seed)
     bodyIf' <- pass1Stmt bodyIf
+    (_, _, seed') <- get
+    put (oldVenv, depth + 1, seed')
     bodyElse' <- pass1Stmt bodyElse
+    (_, _, seed'') <- get
+    put (oldVenv, depth, seed'')
     case typeOfExpr cond' of
         Bool ->
             case cond' of
@@ -286,7 +296,11 @@ pass1Stmt (Abs.CondElse pos cond bodyIf bodyElse) = do
         _ -> throwError (pos, "condition in if statement must be boolean")
 pass1Stmt (Abs.While pos cond body) = do
     cond' <- pass1Expr cond
+    (oldVenv, depth, seed) <- get
+    put (oldVenv, depth + 1, seed)
     body' <- pass1Stmt body
+    (_, _, seed') <- get
+    put (oldVenv, depth, seed')
     case typeOfExpr cond' of
         Bool ->
             case cond' of
