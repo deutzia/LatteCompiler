@@ -156,14 +156,14 @@ pass1Type (Abs.BltinType _ t) = return (pass1BuiltinType t)
 pass1Type (Abs.ArrType _ t) = pass1ArrayType t
 pass1Type (Abs.UserType pos (Abs.Ident ident)) = pass1ClassType ident pos
 
--- first arg is maybe class name to add `this` to args
+-- first arg is maybe class name to add `self` to args
 pass1FunDef :: (Maybe Ident) -> Abs.FunDef Position -> Pass1M FunDef
 pass1FunDef maybeClass (Abs.FunDef pos t (Abs.Ident name) args body) = do
     t' <- pass1Type t
     args_ <- mapM pass1Arg args
     let args' = case maybeClass of
             Nothing -> args_
-            Just className -> (pos, (Class className), "this") : args_
+            Just className -> (pos, (Class className), "self") : args_
     foldM_
         (\vars (p, _, ident) ->
             if S.member ident vars
@@ -455,11 +455,11 @@ ressolveVariable pos varIdent classIdent = do
         Just (fields, _, parent) -> case M.lookup varIdent fields of
             Just t -> do
                 (venv, _, _) <- get
-                let (thisType, _, _) = Maybe.fromJust $ M.lookup "this"  venv
+                let (selfType, _, selfName) = Maybe.fromJust $ M.lookup "self"  venv
                 return $ EClassField
                         t
                         pos
-                        (EVar thisType pos "this")
+                        (EVar selfType pos selfName)
                         varIdent
             Nothing -> case parent of
                 Nothing -> undeclaredIdentifier pos varIdent
@@ -503,7 +503,12 @@ pass1Expr (Abs.ENewArr pos t e) = do
     case typeOfExpr e' of
         Int -> return $ ENewArr (Array t') pos t' e'
         _ -> throwError (pos, "array size has to be an integer")
-pass1Expr (Abs.ENewObj pos t) = ENewObj pos <$> pass1Type t
+pass1Expr (Abs.ENewObj pos t) = do
+    t' <- pass1Type t
+    case t' of
+        Class _ -> return $ ENewObj pos t'
+        _ -> throwError (pos,
+                "cannot declare values of type " ++ show t' ++ " with new")
 pass1Expr (Abs.EVar pos (Abs.Ident ident)) = do
     (venv, _, _) <- get
     case M.lookup ident venv of
@@ -530,20 +535,20 @@ pass1Expr (Abs.EClassArrCoerce pos t) = do
     return $ ECoerce pos t'
 pass1Expr (Abs.EApp pos (Abs.Ident funIdent) args) = do
     (fenv, _, _, _) <- ask
-    ((retType, argTypes, tmpName), maybeThis) <- case M.lookup funIdent fenv of
+    ((retType, argTypes, tmpName), maybeSelf) <- case M.lookup funIdent fenv of
         Nothing ->  do
             (_, _, _, className) <- ask
             case className of
                 Nothing -> undeclaredFunction pos funIdent
                 Just classIdent -> do
                         t <- ressolveFunction pos funIdent classIdent
-                        return (t, Just (EVar (Class classIdent) pos "this"))
+                        return (t, Just (EVar (Class classIdent) pos "self"))
         Just t -> return (t, Nothing)
     args' <- mapM pass1Expr args
     let argTypes' = map typeOfExpr args'
     checkFArgs pos funIdent argTypes' argTypes
-    case maybeThis of
-        Just this -> return $ EClassMethod retType pos this tmpName args'
+    case maybeSelf of
+        Just self -> return $ EClassMethod retType pos self tmpName args'
         Nothing -> return $ EApp retType pos tmpName args'
 pass1Expr (Abs.EClassMethod pos classExpr (Abs.Ident methodIdent) args) = do
     classExpr' <- pass1Expr classExpr

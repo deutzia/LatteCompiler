@@ -4,6 +4,7 @@ module Quadruples where
 import qualified Data.Map as M
 import qualified Data.Graph as G
 import qualified Data.Maybe as Maybe
+import qualified Data.List as L
 import Control.Monad.State
 import Control.Monad.Reader
 
@@ -20,6 +21,8 @@ data BlockEnd
 data Quadruple
     = Quadruple Location Op Location Location
     | Call Location String [Location]
+    -- CallLoc res (l0, l1) [args] == res = call [l0 + l1 * size] [args]
+    | CallLoc Location (Location, Integer) [Location]
     | GetVar Location F.Ident
     | AssignVar F.Ident Location
     | AssignLocal Location Location
@@ -50,8 +53,11 @@ data RelOp
 type GenTriple = (Label, [Quadruple], [Block])
 
 type StrEnv = M.Map F.Ident String
--- map className -> ((number of fields, map fieldName -> offset), (number of methods, map methodName -> offset))
-type ClassEnv = M.Map F.Ident ((Integer, M.Map F.Ident Integer), (Integer, M.Map F.Ident Integer))
+-- map className ->
+--      ((number of fields, map fieldName -> offset),
+--          (number of methods, map methodName -> offset)
+--          label of vtable)
+type ClassEnv = M.Map F.Ident ((Integer, M.Map F.Ident Integer), (Integer, M.Map F.Ident Integer), Label)
 
 -- State (seed, map string -> location)
 type QuadM = ReaderT ClassEnv (State (Int, StrEnv))
@@ -65,12 +71,13 @@ getNewTmpVar = state (\(n, en) -> ("_var" ++ show n, (n + 1, en)))
 getNewLabel :: QuadM Label
 getNewLabel = state (\(n, en) -> ("label_" ++ show n, (n + 1, en)))
 
--- TODO provide data to generate vtables in some reasonable way in AsmBackend
--- probably method part of classEnv that tells us which method is at which
--- offset - at this point method names correspond to generated labels so it's
--- possible to generate vtable from map from method names to offsets buuuuut
--- probably would be easier from a list that doesn't need to be sorted lol
-createClassEnv :: [F.ClassDef] -> ClassEnv
+vtable :: String -> String
+vtable className = "_lat_vtable_" ++ className
+
+renameMethod :: String -> String -> String
+renameMethod className methodName = "_lat_" ++ className ++ "." ++ methodName
+
+createClassEnv :: [F.ClassDef] -> (ClassEnv, [(String, [String])])
 createClassEnv classes =
     let
         getFields (n, acc) (F.Field _ _ ident) = (n + 1, M.insert ident n acc)
@@ -79,27 +86,65 @@ createClassEnv classes =
                 (c, className, Maybe.maybeToList maybeParent))
             classes
     in let
-        sortedClasses = concatMap G.flattenSCC $ G.stronglyConnComp graph
-    in
-    foldl
-        (\acc (F.ClassDef _ className maybeParent fields _methods) ->
-                case maybeParent of
+        sortedClasses =
+                concatMap G.flattenSCC $ G.stronglyConnComp graph
+    in let
+        (classEnv, vtables) = foldl
+            (\(acc, vtm) (F.ClassDef _ className maybeParent fields methods) ->
+                let
+                    getMethods (n, m_acc, m_vtm) (F.FunDef _ _ ident _ _) =
+                        case M.lookup ident m_acc of
+                            Nothing ->
+                                (n + 1,
+                                    M.insert ident n m_acc,
+                                    M.insert
+                                        n
+                                        (renameMethod className ident)
+                                        m_vtm)
+                            Just ofs ->
+                                (n,
+                                    m_acc,
+                                    M.insert
+                                        ofs
+                                        (renameMethod className ident)
+                                        m_vtm)
+                in case maybeParent of
                     Nothing ->
-                        M.insert
-                            className
-                            (foldl getFields (1, M.empty) fields, (0, M.empty))
-                            acc
-                    Just parent -> case M.lookup parent acc of
-                        Nothing -> undefined
-                        Just (parentFields, parentMethods) ->
-                            M.insert
+                        let
+                            (n, cenvMod, vtb) =
+                                foldl getMethods (0, M.empty, M.empty) methods
+                        in (M.insert
                                 className
-                                (foldl getFields parentFields fields,
-                                    parentMethods)
-                                acc
-        )
-        M.empty
-        sortedClasses
+                                (foldl getFields (1, M.empty) fields,
+                                    (n, cenvMod),
+                                    vtable className)
+                                acc,
+                            M.insert className vtb vtm)
+                    Just parent ->
+                        case (M.lookup parent acc, M.lookup parent vtm) of
+                            (Just (pFields, (pOfs, pMethods), _), Just pVtb) ->
+                                let (n, cenvMod, vtb) =
+                                        foldl
+                                            getMethods
+                                            (pOfs, pMethods, pVtb)
+                                            methods
+                                in (M.insert
+                                        className
+                                        (foldl getFields pFields fields,
+                                            (n, cenvMod),
+                                            vtable className)
+                                        acc,
+                                    M.insert className vtb vtm)
+                            _ -> undefined
+            )
+            (M.empty, M.empty)
+            sortedClasses
+    in let
+        vtables' =
+            map
+                (\(k, v) -> (vtable k, map snd $ L.sort $ M.toList v))
+                (M.toList vtables)
+    in (classEnv, vtables')
 
 -- get memory location for string literals
 getStringName :: String -> QuadM Location
@@ -130,7 +175,7 @@ dereference triple (F.ClassAttr _ _ lv fieldIdent) = do
                 classEnv <- ask
                 case M.lookup classIdent classEnv of
                     Nothing -> undefined
-                    Just ((_, fields), _) ->
+                    Just ((_, fields), _, _) ->
                             case M.lookup fieldIdent fields of
                                 Nothing -> undefined
                                 Just offset -> do
@@ -157,7 +202,7 @@ setVar triple (F.ClassAttr _ _ lv fieldIdent) rvalue = do
                 classEnv  <- ask
                 case M.lookup classIdent classEnv of
                     Nothing -> undefined
-                    Just ((_, fields), _) ->
+                    Just ((_, fields), _, _) ->
                             case M.lookup fieldIdent fields of
                                 Nothing -> undefined
                                 Just offset -> do
@@ -165,22 +210,29 @@ setVar triple (F.ClassAttr _ _ lv fieldIdent) rvalue = do
                                     return (l, q : qs, bs)
         _ -> undefined
 
-getQuadsProg :: F.Program -> ([([Block], [String])], StrEnv)
+getQuadsProg :: F.Program -> ([([Block], [String])], StrEnv, [(String, [String])])
 getQuadsProg (F.Program _ classDefs funDefs) =
-    let classEnv = createClassEnv classDefs in
+    let (classEnv, vtables) = createClassEnv classDefs in
     let
+        funs = (id, funDefs) :
+            (map
+                (\(F.ClassDef _ className _ _ methods) -> (renameMethod className, methods))
+                classDefs)
+    in let
         (blocks, (_, strenv)) =
             runState
-                (runReaderT (getQuadsFunDefs funDefs) classEnv)
+                (runReaderT (mapM getQuadsFunDefs funs) classEnv)
                 (0, M.empty)
-    in (blocks, strenv)
+    in (concat blocks, strenv, vtables)
 
-getQuadsFunDefs :: [F.FunDef] -> QuadM [([Block], [String])]
-getQuadsFunDefs = mapM getQuadsFunDef
+getQuadsFunDefs :: ((String -> String), [F.FunDef]) -> QuadM [([Block], [String])]
+getQuadsFunDefs (prefix, fundefs) = do
+--    traceM $ show (prefix "", fundefs)
+    mapM (getQuadsFunDef prefix) fundefs
 
-getQuadsFunDef :: F.FunDef -> QuadM ([Block], [String])
-getQuadsFunDef (F.FunDef _ _ name args body) = do
-    (lastLabel, quads, blocks) <- getQuadsBlock (name, [], []) body
+getQuadsFunDef :: (String -> String) -> F.FunDef -> QuadM ([Block], [String])
+getQuadsFunDef prefix (F.FunDef _ _ name args body) = do
+    (lastLabel, quads, blocks) <- getQuadsBlock (prefix name, [], []) body
     let argNames = map (\(_, _, argName) -> argName) args
     return (reverse $
         (Block lastLabel (reverse quads) (Return Nothing)) : blocks, argNames)
@@ -275,20 +327,17 @@ getQuadsExpr triple (F.ENewArr _ _ _ expr) = do
     let writeSize = WritePtr arrAddr (Literal 0) size
     return ((label, writeSize : (call : (add1 : quads)), blocks), arrAddr)
 getQuadsExpr (label, quads, blocks) (F.ENewObj _ t) = do
-    size <- case t of
-        F.Int -> return 1
-        F.Bool -> return 1
-        F.String_ -> return 1
-        F.Void -> return 0
+    (size, vt) <- case t of
         F.Class classIdent -> do
             classEnv <- ask
             case M.lookup classIdent classEnv of
                 Nothing -> undefined
-                Just ((s, _), _) -> return s
-        F.Array _ -> return 1
+                Just ((s, _), _, vtab) -> return (s, vtab)
+        _ -> undefined
     res <- getNewTmpName
     let call = Call res "allocate" [Literal size]
-    return ((label, call : quads, blocks), res)
+    let qWrite = WritePtr res (Literal 0) (Str vt)
+    return ((label, qWrite : call : quads, blocks), res)
 getQuadsExpr (label, quads, blocks) (F.EVar _ _ ident) = do
     reg <- getNewTmpName
     return ((label, (GetVar reg ident) : quads, blocks), reg)
@@ -309,7 +358,33 @@ getQuadsExpr triple (F.EApp _ _ fname args) = do
         args
     res <- getNewTmpName
     return ((label, (Call res fname (reverse args')) : quads, blocks), res)
-getQuadsExpr _ (F.EClassMethod _ _ _ _ _) = undefined
+getQuadsExpr triple (F.EClassMethod _ _ classExpr methodIdent args) = do
+    (triple', this) <- getQuadsExpr triple classExpr
+    ((label, quads, blocks), args') <- foldM
+        (\(t, acc) arg -> do
+            (t', r) <- getQuadsExpr t arg
+            return (t', r : acc)
+            )
+        (triple', [])
+        args
+    case F.typeOfExpr classExpr of
+        F.Class classIdent -> do
+            classEnv <- ask
+            case M.lookup classIdent classEnv of
+                Nothing -> undefined
+                Just (_, (_, methods), _) -> do
+                    case M.lookup methodIdent methods of
+                        Nothing -> undefined
+                        Just offset -> do
+                            tmp <- getNewTmpName
+                            res <- getNewTmpName
+                            let q1 = ReadPtr tmp this (Literal 0)
+                            let q2 = CallLoc
+                                    res
+                                    (tmp, offset)
+                                    (this : reverse args')
+                            return ((label, q2 : q1 : quads, blocks), res)
+        _ -> undefined
 getQuadsExpr triple (F.EClassField _ _ classExpr fieldIdent) =
     case F.typeOfExpr classExpr of
         F.Array _ -> if fieldIdent /= "length"
@@ -323,7 +398,7 @@ getQuadsExpr triple (F.EClassField _ _ classExpr fieldIdent) =
                 classEnv  <- ask
                 case M.lookup classIdent classEnv of
                     Nothing -> undefined
-                    Just ((_, fields), _) ->
+                    Just ((_, fields), _, _) ->
                             case M.lookup fieldIdent fields of
                                 Nothing -> undefined
                                 Just offset -> do

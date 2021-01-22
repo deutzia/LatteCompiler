@@ -3,6 +3,7 @@ module AsmBackend where
 
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Data.List as L
 import Control.Monad
 import Control.Monad.Reader
 import qualified Data.Function as F
@@ -24,7 +25,8 @@ prefix =
     "extern printString\n" ++
     "extern readInt\n" ++
     "extern readString\n" ++
-    "extern allocate\n\n" ++
+    "extern allocate\n" ++
+    "extern error\n\n" ++
     "section .rodata\n"
 
 wrapOut :: (String -> a) -> String -> a
@@ -77,9 +79,20 @@ generateData strenv =
     in
     concat strs
 
-generateAssembly :: (String -> IO ()) -> ([([Q.Block], [String])], Q.StrEnv) -> IO ()
-generateAssembly outFun (funs, strenv) = do
+generateVtables :: (String -> IO ()) -> [(String, [String])] -> IO ()
+generateVtables outFun vtables =
+    foldM
+        (\() (name, funs) -> do
+            outFun $ name ++ " dq " ++ (L.intercalate ", " funs) ++ "\n"
+        )
+        ()
+        vtables
+
+generateAssembly :: (String -> IO ()) -> ([([Q.Block], [String])], Q.StrEnv, [(String, [String])]) -> IO ()
+generateAssembly outFun (funs, strenv, vtables) = do
     outFun $ prefix ++ generateData strenv ++ "\nsection .text\n\n"
+    generateVtables outFun vtables
+    outFun "\n"
     foldM
         (\() (fun, args) ->
             let regs = getRegistersFun (fun, args) in
@@ -142,6 +155,23 @@ generateAssemblyQuad outFun () (Q.Call r1 name args) =
         8
         args
     outFun $ "call " ++ name
+    outFun $ "mov rax, [rsp]"
+    outFun $ "add rsp, " ++ show (offset * 8)
+    writeVal outFun r1 "rax"
+generateAssemblyQuad outFun () (Q.CallLoc r1 (addr, callOfs) args) =
+    let offset = length args + 1 in do
+    outFun $ "sub rsp, " ++ show (offset * 8)
+    foldM_
+        (\ofs arg -> do
+            fetchVal outFun arg "rax"
+            outFun $ "lea r8, [rsp + " ++ show ofs ++ "]"
+            outFun $ "mov [r8], rax"
+            return (ofs + 8)
+        )
+        8
+        args
+    fetchVal outFun addr "rax"
+    outFun $ "call [rax + " ++ show callOfs ++ " * 8]"
     outFun $ "mov rax, [rsp]"
     outFun $ "add rsp, " ++ show (offset * 8)
     writeVal outFun r1 "rax"
@@ -215,6 +245,11 @@ getRegistersQuad regs (Q.Quadruple r1 _ r2 r3) =
         F.& (addLocationToRegisters r3)
 getRegistersQuad regs (Q.Call r _ rs) =
     foldr addLocationToRegisters (addLocationToRegisters r regs) rs
+getRegistersQuad regs (Q.CallLoc r (r1, _) rs) =
+    foldr
+        addLocationToRegisters
+        (addLocationToRegisters r (addLocationToRegisters r1 regs))
+        rs
 getRegistersQuad regs (Q.GetVar r1 r2) =
     S.insert r2 (addLocationToRegisters r1 regs)
 getRegistersQuad regs (Q.AssignVar r1 r2) =
