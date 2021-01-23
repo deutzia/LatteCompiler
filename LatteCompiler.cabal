@@ -16,6 +16,7 @@ executable latc_x86_64
   other-modules:     Frontend
                      Quadruples
                      AsmBackend
+                     Optimizations
                      Parsing.AbsLatte
                      Parsing.ErrM
                      Parsing.LexLatte

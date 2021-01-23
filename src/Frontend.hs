@@ -647,7 +647,7 @@ pass1Expr (Abs.EMul pos e1 mulop e2) =
             case mulop of
                 Abs.Times _ -> optimizeConstExpr <$> createEMul (*) Mul
                 Abs.Div _ -> checkIf0 e2' "division" *> createEMul div Div
-                Abs.Mod _ -> checkIf0 e2' "modulo" *> createEMul mod Mod
+                Abs.Mod _ -> checkIf0 e2' "modulo" *> createEMul rem Mod
         _ -> throwError
             (getPosMul mulop,
              "type mismatch - both operands should be integers")

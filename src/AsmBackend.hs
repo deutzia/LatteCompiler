@@ -7,6 +7,7 @@ import qualified Data.List as L
 import Control.Monad
 import Control.Monad.Reader
 import qualified Data.Function as F
+import Debug.Trace
 
 import qualified Quadruples as Q
 
@@ -90,6 +91,7 @@ generateVtables outFun vtables =
 
 generateAssembly :: (String -> IO ()) -> ([([Q.Block], [String])], Q.StrEnv, [(String, [String])]) -> IO ()
 generateAssembly outFun (funs, strenv, vtables) = do
+--    traceM $ show funs
     outFun $ prefix ++ generateData strenv ++ "\nsection .text\n\n"
     generateVtables outFun vtables
     outFun "\n"
@@ -181,11 +183,8 @@ generateAssemblyQuad outFun () (Q.GetVar r1 r2) = do
 generateAssemblyQuad outFun () (Q.AssignVar r1 r2) = do
     fetchVal outFun r2 "rax"
     writeValReg outFun r1 "rax"
-generateAssemblyQuad outFun () (Q.AssignLocal reg (Q.Literal n)) =
+generateAssemblyQuad outFun () (Q.AssignLocal reg n) =
     writeVal outFun reg (show n)
-generateAssemblyQuad outFun () (Q.AssignLocal r1 r2) = do
-    fetchVal outFun r2 "rax"
-    writeVal outFun r1 "rax"
 generateAssemblyQuad outFun () (Q.ReadPtr r1 r2 r3) = do
     fetchVal outFun r2 "rax"
     fetchVal outFun r3 "rsi"
@@ -254,9 +253,8 @@ getRegistersQuad regs (Q.GetVar r1 r2) =
     S.insert r2 (addLocationToRegisters r1 regs)
 getRegistersQuad regs (Q.AssignVar r1 r2) =
     S.insert r1 (addLocationToRegisters r2 regs)
-getRegistersQuad regs (Q.AssignLocal r1 r2) =
+getRegistersQuad regs (Q.AssignLocal r1 _) =
     (addLocationToRegisters r1 regs)
-        F.& (addLocationToRegisters r2)
 getRegistersQuad regs (Q.WritePtr r1 r2 r3) =
     (addLocationToRegisters r1 regs)
         F.& (addLocationToRegisters r2)

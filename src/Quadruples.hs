@@ -11,7 +11,11 @@ import Control.Monad.Reader
 import qualified Frontend as F
 
 type Label = String
-data Location = Literal Integer | Str String | Reg String deriving Show
+data Location
+    = Literal Integer
+    | Str String
+    | Reg String
+    deriving (Show, Eq, Ord)
 
 data BlockEnd
     = UnconditionalJump Label
@@ -25,12 +29,12 @@ data Quadruple
     | CallLoc Location (Location, Integer) [Location]
     | GetVar Location F.Ident
     | AssignVar F.Ident Location
-    | AssignLocal Location Location
+    | AssignLocal Location Integer
     -- ReadPtr l0 l1 l2 == l0 = [l1 + l2 * size]
     | ReadPtr Location Location Location
     -- WritePtr l0 l1 l2 == [l0 + l1 * size] = l2
     | WritePtr Location Location Location
-    deriving Show
+    deriving (Show, Eq, Ord)
 data Block = Block Label [Quadruple] BlockEnd deriving Show
 data Condition = Loc Location | Rel RelOp Location Location deriving Show
 data Op
@@ -39,7 +43,7 @@ data Op
     | Mul
     | Div
     | Mod
-    deriving Show
+    deriving (Show, Eq, Ord)
 data RelOp
     = Lth
     | Le
@@ -47,7 +51,7 @@ data RelOp
     | Ge
     | Equ
     | Neq
-    deriving Show
+    deriving (Show, Eq, Ord)
 
 -- generation triple
 type GenTriple = (Label, [Quadruple], [Block])
@@ -450,11 +454,11 @@ getQuadsExpr triple e@(F.ERel _ _ _ _) = do
     newLabel <- getNewLabel
     let blockTrue = Block
             labelTrue
-            [AssignLocal res (Literal 1)]
+            [AssignLocal res 1]
             (UnconditionalJump newLabel)
     let blockFalse = Block
             labelFalse
-            [AssignLocal res (Literal 0)]
+            [AssignLocal res 0]
             (UnconditionalJump newLabel)
     return ((newLabel, [], blockFalse : (blockTrue : blocks)), res)
 getQuadsExpr triple e@(F.EBoolOp _ _ _ _) = do
@@ -465,11 +469,11 @@ getQuadsExpr triple e@(F.EBoolOp _ _ _ _) = do
     newLabel <- getNewLabel
     let blockTrue = Block
             labelTrue
-            [AssignLocal res (Literal 1)]
+            [AssignLocal res 1]
             (UnconditionalJump newLabel)
     let blockFalse = Block
             labelFalse
-            [AssignLocal res (Literal 0)]
+            [AssignLocal res 0]
             (UnconditionalJump newLabel)
     return ((newLabel, [], blockFalse : (blockTrue : blocks)), res)
 

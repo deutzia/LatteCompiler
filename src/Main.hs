@@ -18,6 +18,7 @@ import Parsing.ParLatte
 import Frontend
 import Quadruples
 import AsmBackend
+import Optimizations
 
 fileToS :: FilePath -> FilePath
 fileToS fileName = dropExtension fileName ++ ".s"
@@ -48,7 +49,9 @@ runFullCompile filename = do
                     let execFilename = dropExtension filename
                     writeFile outfilename ""
                     let outFun = appendFile outfilename
-                    generateAssembly outFun (getQuadsProg p)
+                    let (quads, strEnv, vtables) = getQuadsProg p
+                    let quads' = lcse quads
+                    generateAssembly outFun (quads', strEnv, vtables)
                     callCommand $ "nasm -g -f elf64 " ++ outfilename
                     callCommand $ "gcc " ++ objectFilename ++ " libs/runtime.o libs/calls.o -o " ++ execFilename
         Bad e -> printErrorAndExit (Nothing, e)
