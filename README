@@ -38,3 +38,11 @@ between latc generated code and linked C code is needed, therefore libs/ contain
 not only the runtime.c with implementation of standard function, but also
 calls.asm, which traslates from one calling convention to another.
 
+There is support for:
+* arrays
+* structures
+* objects (fields as in structures, methods, inheritance)
+* virtual methods
+
+The assumption is that all methods are virtual, and at offset 0 in an object
+there is a pointer to a vtable, and fields start from offset 1.
