@@ -117,7 +117,9 @@ generateAssemblyBlock outFun (offset, isFirst) (Q.Block label _ quads end) = do
     when isFirst (do
             wrappedOutFun "push rbp"
             wrappedOutFun "mov rbp, rsp"
-            wrappedOutFun $ "sub rsp, " ++ show offset)
+            wrappedOutFun $ "sub rsp, " ++ show offset
+            outFun $ label ++ ".internal:\n"
+            )
     foldM (generateAssemblyQuad wrappedOutFun) () quads
     generateAssemblyBEnd wrappedOutFun end
     return (offset, False)

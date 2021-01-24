@@ -62,17 +62,17 @@ type StrEnv = M.Map F.Ident String
 --          label of vtable)
 type ClassEnv = M.Map F.Ident ((Integer, M.Map F.Ident Integer), (Integer, M.Map F.Ident Integer), Label)
 
--- State (seed, map string -> location)
-type QuadM = ReaderT ClassEnv (State (Int, StrEnv))
+-- State (seed, map string -> location, (function name, [function args]))
+type QuadM = ReaderT ClassEnv (State (Int, StrEnv, (String, [String])))
 
 getNewTmpVar :: QuadM String
-getNewTmpVar = state (\(n, en) -> ("_var" ++ show n, (n + 1, en)))
+getNewTmpVar = state (\(n, en, f) -> ("_var" ++ show n, (n + 1, en, f)))
 
 getNewTmpName :: QuadM Location
-getNewTmpName = state (\(n, en) -> (Reg $ "_t" ++ show n, (n + 1, en)))
+getNewTmpName = state (\(n, en, f) -> (Reg $ "_t" ++ show n, (n + 1, en, f)))
 
 getNewLabel :: QuadM Label
-getNewLabel = state (\(n, en) -> ("label_" ++ show n, (n + 1, en)))
+getNewLabel = state (\(n, en, f) -> ("label_" ++ show n, (n + 1, en, f)))
 
 vtable :: String -> String
 vtable className = "_lat_vtable_" ++ className
@@ -152,11 +152,11 @@ createClassEnv classes =
 -- get memory location for string literals
 getStringName :: String -> QuadM Location
 getStringName s = do
-    (n, en) <- get
+    (n, en, f) <- get
     case M.lookup s en of
         Nothing ->
             let name = "str" ++ show n in
-            put (n + 1, M.insert s name en) >> return (Str name)
+            put (n + 1, M.insert s name en, f) >> return (Str name)
         Just name -> return (Str name)
 
 dereference :: GenTriple -> F.Lvalue -> QuadM (GenTriple, Location)
@@ -240,10 +240,10 @@ getQuadsProg (F.Program _ classDefs funDefs) =
                 (\(F.ClassDef _ className _ _ methods) -> (renameMethod className, methods))
                 classDefs)
     in let
-        (blocks, (_, strenv)) =
+        (blocks, (_, strenv, _)) =
             runState
                 (runReaderT (mapM getQuadsFunDefs funs) classEnv)
-                (0, M.empty)
+                (0, M.empty, ("", []))
     in (concat blocks, strenv, vtables)
 
 getQuadsFunDefs :: ((String -> String), [F.FunDef]) -> QuadM [([Block], [String])]
@@ -252,10 +252,12 @@ getQuadsFunDefs (prefix, fundefs) = do
     mapM (getQuadsFunDef prefix) fundefs
 
 getQuadsFunDef :: (String -> String) -> F.FunDef -> QuadM ([Block], [String])
-getQuadsFunDef prefix (F.FunDef _ _ name args body) = do
+getQuadsFunDef prefix (F.FunDef _ _ name args body) =
+    let argNames = map (\(_, _, argName) -> argName) args in
+    do
+    state (\(n, e, _) -> ((), (n, e, (prefix name, argNames))))
     (lastLabel, vars, quads, blocks) <-
             getQuadsBlock (prefix name, [], [], []) body
-    let argNames = map (\(_, _, argName) -> argName) args
     return (reverse $
         (Block lastLabel vars (reverse quads) (Return Nothing)) : blocks,
             argNames)
@@ -297,6 +299,31 @@ getQuadsStmt (label, vars, quads, blocks) (F.Ret _ Nothing) = do
             [],
             [],
             block : blocks)
+getQuadsStmt triple (F.Ret _ (Just expr@(F.EApp _ _ fName args))) = do
+    (_, _, (currentName, currentArgs)) <- get
+    if fName == currentName
+        then
+            do
+                ((label, vars, quads, blocks), args') <- foldM
+                    (\(t, acc) arg -> do
+                        (t', r) <- getQuadsExpr t arg
+                        return (t', r : acc)
+                        )
+                    (triple, [])
+                    args
+                let writes = zipWith AssignVar currentArgs args'
+                nextLabel <- getNewLabel
+                let block = Block
+                        label
+                        vars
+                        (reverse (writes ++ quads))
+                        (UnconditionalJump (fName ++ ".internal"))
+                return $ (nextLabel, [], [], (block : blocks))
+        else do
+            nextLabel <- getNewLabel
+            ((label, vars, quads, blocks), reg) <- getQuadsExpr triple expr
+            let block = Block label vars (reverse quads) (Return (Just reg))
+            return $ (nextLabel, [], [], block : blocks)
 getQuadsStmt triple (F.Ret _ (Just expr)) = do
     nextLabel <- getNewLabel
     ((label, vars, quads, blocks), reg) <- getQuadsExpr triple expr

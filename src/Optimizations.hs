@@ -183,10 +183,12 @@ removeDeadBlocks blocks@((Q.Block funEntry _ _ _) : _) =
         reachables = G.reachable graph (Maybe.fromJust $ keyToVertex funEntry)
     in let
         reachableSet = S.fromList reachables
-    in
-        filter
+    in let
+        undeadBlocks = filter
             (\(Q.Block blockName _ _ _) ->
                 S.member
                     (Maybe.fromJust $ keyToVertex blockName)
                     reachableSet)
             blocks
+    in
+        undeadBlocks
