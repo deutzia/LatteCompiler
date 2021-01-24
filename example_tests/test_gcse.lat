@@ -1,0 +1,14 @@
+int main() {
+    int x, y, z;
+    x = readInt();
+    y = readInt();
+    z = readInt();
+    printInt(x * 3 + y * 5 + z * 7);
+    if (x < y) {
+        printInt(x * 3 + y * 5 + z * 7);
+    }
+    else {
+        printInt(x * 3 + y * 5 + z * 7);
+    }
+    return 0;
+}

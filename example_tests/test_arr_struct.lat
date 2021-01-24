@@ -1,0 +1,15 @@
+class A {
+    int[] x;
+}
+
+int main()
+{
+    A[] a = new A[5];
+    a[0] = new A;
+    a[0].x = new int[4];
+    a[0].x[3] = 57;
+    int[] x = a[0].x;
+    printInt(x[3]);
+    return 0;
+}
+

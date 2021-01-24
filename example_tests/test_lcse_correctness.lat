@@ -1,0 +1,13 @@
+void test(int[] a) {
+    a[3] = 10;
+}
+
+int main() {
+    int[] a = new int[5];
+    a[3] = 7;
+    printInt(a[3]);
+    test(a);
+    printInt(a[3]);
+    return 0;
+}
+
