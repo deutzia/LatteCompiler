@@ -50,7 +50,7 @@ runFullCompile filename = do
                     writeFile outfilename ""
                     let outFun = appendFile outfilename
                     let (quads, strEnv, vtables) = getQuadsProg p
-                    let quads' = lcse quads
+                    let quads' = optimizeQuads quads
                     generateAssembly outFun (quads', strEnv, vtables)
                     callCommand $ "nasm -g -f elf64 " ++ outfilename
                     callCommand $ "gcc " ++ objectFilename ++ " libs/runtime.o libs/calls.o -o " ++ execFilename

@@ -183,8 +183,6 @@ generateAssemblyQuad outFun () (Q.GetVar r1 r2) = do
 generateAssemblyQuad outFun () (Q.AssignVar r1 r2) = do
     fetchVal outFun r2 "rax"
     writeValReg outFun r1 "rax"
-generateAssemblyQuad outFun () (Q.AssignLocal reg n) =
-    writeVal outFun reg (show n)
 generateAssemblyQuad outFun () (Q.ReadPtr r1 r2 r3) = do
     fetchVal outFun r2 "rax"
     fetchVal outFun r3 "rsi"
@@ -253,8 +251,6 @@ getRegistersQuad regs (Q.GetVar r1 r2) =
     S.insert r2 (addLocationToRegisters r1 regs)
 getRegistersQuad regs (Q.AssignVar r1 r2) =
     S.insert r1 (addLocationToRegisters r2 regs)
-getRegistersQuad regs (Q.AssignLocal r1 _) =
-    (addLocationToRegisters r1 regs)
 getRegistersQuad regs (Q.WritePtr r1 r2 r3) =
     (addLocationToRegisters r1 regs)
         F.& (addLocationToRegisters r2)
