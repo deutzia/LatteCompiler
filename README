@@ -46,3 +46,19 @@ There is support for:
 
 The assumption is that all methods are virtual, and at offset 0 in an object
 there is a pointer to a vtable, and fields start from offset 1.
+
+Optimizations supported: note that GCSE = LCSE performed on all blocks with the
+same cache. However, since my code is not in SSA form - I write to variables
+multiple times, but not to temporary registers. This can be, however, fixed in
+quad generation - blocks of code have to be aware which variables have to be
+refetched at the begining. This way, GCSE is implemented.
+
+Example tests of noteworthy behaviours are located in example_tests directory:
+* test_arr_struct.lat shows that arrays of objects, objects with arrays etc are
+  correctly supported
+* test_gcse shows that expressions are not recomputed in branches of an
+  if-expression - blocks with labels other than lat_main are short and clearly
+  don't perform complicated computations
+* test_lcse_correctness.lat shows the correct behaviour in case of function calls
+  since those can perform memory writes. As a result, all cached memory reads
+  are invalidated after a function call or at the beginning of a new block
