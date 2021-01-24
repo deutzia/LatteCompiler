@@ -194,6 +194,9 @@ pass1FunDef maybeClass (Abs.FunDef pos t (Abs.Ident name) args body) = do
 pass1Arg :: Abs.Arg Position -> Pass1M Arg
 pass1Arg (Abs.Arg pos t (Abs.Ident ident)) = do
     t' <- pass1Type t
+    when
+        (t' == Void)
+        (throwError (pos, "Cannot declare arguments of type void"))
     return (pos, t', ident)
 
 pass1Block :: Abs.Block Position -> Pass1M Block
@@ -230,6 +233,10 @@ pass1Stmt (Abs.Decl pos t items) = do
     items' <- mapM (pass1Item t') items
     return $ Decl pos t' items'
 pass1Stmt (Abs.Ass pos e1 e2) = do
+    case e1 of
+        Abs.EVar _ (Abs.Ident ident) ->
+            when (ident == "self") (throwError (pos, "cannot assign to self"))
+        _ -> return ()
     lval <- pass1Expr e1 >>= getLvalue
     expr <- pass1Expr e2
     allowAssign <- isAssignable (typeOfExpr expr) (typeOfLvalue lval)
@@ -373,6 +380,11 @@ checkdecl :: Position -> Ident -> Type -> Pass1M Ident
 checkdecl pos ident t = do
     varName <- createVarName
     (venv, depth, seed) <- get
+    when
+        (ident == "self")
+        (throwError
+            (pos,
+                "cannot declare variable called self, it's a reserved keyword"))
     case M.lookup ident venv of
         Nothing -> do
             put (M.insert ident (t, depth, varName) venv, depth, seed)
@@ -702,7 +714,7 @@ pass1Expr (Abs.ERel pos e1 relop e2) =
     let createERelString f fname = do {
         case (e1', e2') of
             (EString _ n, EString _ m) -> return $ ELitBool pos (f n m)
-            _ -> return $ EApp String_ pos fname [e1', e2']
+            _ -> return $ EApp Bool pos fname [e1', e2']
     }
     let createERelBool f op = do {
         case (e1', e2') of
