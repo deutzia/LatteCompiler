@@ -1,8 +1,22 @@
+// read values by function calls so that they don't get optimized out as constexprs
+
+int get_x() {
+    return 2;
+}
+
+int get_y() {
+    return 3;
+}
+
+int get_z() {
+    return 4;
+}
+
 int main() {
     int x, y, z;
-    x = readInt();
-    y = readInt();
-    z = readInt();
+    x = get_x();
+    y = get_y();
+    z = get_z();
     printInt(x * 3 + y * 5 + z * 7);
     if (x < y) {
         printInt(x * 3 + y * 5 + z * 7);
