@@ -157,13 +157,13 @@ pass1Type (Abs.ArrType _ t) = pass1ArrayType t
 pass1Type (Abs.UserType pos (Abs.Ident ident)) = pass1ClassType ident pos
 
 -- first arg is maybe class name to add `self` to args
-pass1FunDef :: (Maybe Ident) -> Abs.FunDef Position -> Pass1M FunDef
+pass1FunDef :: Maybe Ident -> Abs.FunDef Position -> Pass1M FunDef
 pass1FunDef maybeClass (Abs.FunDef pos t (Abs.Ident name) args body) = do
     t' <- pass1Type t
     args_ <- mapM pass1Arg args
     let args' = case maybeClass of
             Nothing -> args_
-            Just className -> (pos, (Class className), "self") : args_
+            Just className -> (pos, Class className, "self") : args_
     foldM_
         (\vars (p, _, ident) ->
             if S.member ident vars
@@ -503,7 +503,7 @@ checkFArgs pos funIdent actualTypes expectedTypes = do
         (\acc (t1, t2) -> if acc then isAssignable t1 t2 else return acc)
         True
         (zip actualTypes expectedTypes)
-    when (not canAssign)
+    unless canAssign
         (throwError
             (pos,
             "incorrect types of arguments in call to function " ++
@@ -836,9 +836,9 @@ createClassEnv classes classesExt = do
             map (\(_, name, _) ->  name) classes ++
             map (\(_, name, _, _) -> name) classesExt
     let classNames = S.fromList classList
-    foldM (\() (p, _, parentName, _) ->
-        when
-            (not (S.member parentName classNames))
+    foldM_ (\() (p, _, parentName, _) ->
+        unless
+            (S.member parentName classNames)
             (throwError (p, "undeclared class " ++ parentName)))
         () classesExt
     let graph =
@@ -849,7 +849,7 @@ createClassEnv classes classesExt = do
     let tmpEnv =
             M.fromList
                 (map (\name -> (name, (M.empty, M.empty, Nothing))) classList)
-    foldM (\() scc ->
+    foldM_ (\() scc ->
         when
             (length scc > 1)
             (throwError
@@ -936,8 +936,8 @@ pass1Classes classes classesExt =
                 (\(fenv, cenv, type_, _) ->
                     (fenv, cenv, type_, Just className))
                 (mapM (\fn -> do
-                    fn'@(FunDef _ retType funIdent args _) <- (pass1FunDef
-                            (Just className)) fn
+                    fn'@(FunDef _ retType funIdent args _) <- pass1FunDef
+                            (Just className) fn
                     parentType <- catchError
                         (Just <$> ressolveFunction pos funIdent parentName)
                         (\_ -> return Nothing)

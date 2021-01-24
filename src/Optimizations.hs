@@ -45,17 +45,17 @@ lcseSingleBlock (subs, qMap, vMap, _) (Q.Block label vars quads blockEnd) =
                     case l' of
                         Q.Literal c ->
                             if c == 0
-                                then (Q.UnconditionalJump label1)
-                                else (Q.UnconditionalJump label0)
-                        _ -> (Q.ConditionalJump (Q.Loc l') label0 label1)
+                                then Q.UnconditionalJump label1
+                                else Q.UnconditionalJump label0
+                        _ -> Q.ConditionalJump (Q.Loc l') label0 label1
                 Q.Rel op l0 l1 ->
                     let l0' = Maybe.fromMaybe l0 (M.lookup l0 subs') in
                     let l1' = Maybe.fromMaybe l1 (M.lookup l1 subs') in
                     case (l0', l1') of
                         (Q.Literal v1, Q.Literal v2) ->
                             let helper opFun = if opFun v1 v2
-                                then (Q.UnconditionalJump label0)
-                                else (Q.UnconditionalJump label1)
+                                then Q.UnconditionalJump label0
+                                else Q.UnconditionalJump label1
                             in case op of
                                 Q.Lth -> helper (<)
                                 Q.Le -> helper (<=)
@@ -63,14 +63,14 @@ lcseSingleBlock (subs, qMap, vMap, _) (Q.Block label vars quads blockEnd) =
                                 Q.Ge -> helper (>=)
                                 Q.Equ -> helper (==)
                                 Q.Neq -> helper (/=)
-                        _ -> (Q.ConditionalJump
+                        _ -> Q.ConditionalJump
                                 (Q.Rel op l0' l1')
                                 label0
-                                label1)
+                                label1
             be@(Q.Return Nothing) -> be
             be@(Q.Return (Just loc)) -> case M.lookup loc subs' of
                 Nothing -> be
-                Just loc' -> (Q.Return (Just loc'))
+                Just loc' -> Q.Return (Just loc')
     in (resultEnv, Q.Block label vars (reverse quads') blockEnd')
 
 -- canonicalForm of a quad is a form that makes all the necessary substitutions
@@ -119,7 +119,7 @@ foldConsts (op, Q.Literal n, Q.Literal m) =
 foldConsts _ = Nothing
 
 lcseQuads :: Env -> [Q.Quadruple] -> (Env, [Q.Quadruple]) -- reversed result
-lcseQuads env quads =
+lcseQuads env =
     foldl
         (\((subs, qMap, vMap, ptrMap), acc) quad ->
             let quad' = canonicalForm subs quad in
@@ -142,8 +142,8 @@ lcseQuads env quads =
                                 acc)
                 -- calls invalidate all memory reads, because there can be
                 -- memory writes in the function
-                Q.Call _ _ _ -> ((subs, qMap, vMap, M.empty), quad' : acc)
-                Q.CallLoc _ _ _ -> ((subs, qMap, vMap, M.empty), quad' : acc)
+                Q.Call {} -> ((subs, qMap, vMap, M.empty), quad' : acc)
+                Q.CallLoc {} -> ((subs, qMap, vMap, M.empty), quad' : acc)
                 Q.GetVar r vName -> case M.lookup vName vMap of
                     Just oldRes ->
                         ((M.insert r oldRes subs, qMap, vMap, ptrMap), acc)
@@ -162,10 +162,9 @@ lcseQuads env quads =
                             vMap,
                             M.insert (l0, l1) r ptrMap),
                             quad' : acc)
-                Q.WritePtr _ _ _ -> ((subs, qMap, vMap, M.empty), quad' : acc)
+                Q.WritePtr {} -> ((subs, qMap, vMap, M.empty), quad' : acc)
         )
         (env, [])
-        quads
 
 removeDeadBlocks :: [Q.Block] -> [Q.Block]
 removeDeadBlocks [] = []

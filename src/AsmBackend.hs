@@ -7,7 +7,6 @@ import qualified Data.List as L
 import Control.Monad
 import Control.Monad.Reader
 import qualified Data.Function as F
-import Debug.Trace
 
 import qualified Quadruples as Q
 
@@ -31,7 +30,7 @@ prefix =
     "section .rodata\n"
 
 wrapOut :: (String -> a) -> String -> a
-wrapOut f = \s -> f $ "    " ++ s ++ "\n"
+wrapOut f s = f $ "    " ++ s ++ "\n"
 
 -- negated sign
 nsgn :: Int -> String
@@ -81,17 +80,15 @@ generateData strenv =
     concat strs
 
 generateVtables :: (String -> IO ()) -> [(String, [String])] -> IO ()
-generateVtables outFun vtables =
+generateVtables outFun =
     foldM
         (\() (name, funs) -> do
-            outFun $ name ++ " dq " ++ (L.intercalate ", " funs) ++ "\n"
+            outFun $ name ++ " dq " ++ L.intercalate ", " funs ++ "\n"
         )
         ()
-        vtables
 
 generateAssembly :: (String -> IO ()) -> ([([Q.Block], [String])], Q.StrEnv, [(String, [String])]) -> IO ()
 generateAssembly outFun (funs, strenv, vtables) = do
---    traceM $ show funs
     outFun $ prefix ++ generateData strenv ++ "\nsection .text\n\n"
     generateVtables outFun vtables
     outFun "\n"
@@ -120,7 +117,7 @@ generateAssemblyBlock outFun (offset, isFirst) (Q.Block label _ quads end) = do
             wrappedOutFun $ "sub rsp, " ++ show offset
             outFun $ label ++ ".internal:\n"
             )
-    foldM (generateAssemblyQuad wrappedOutFun) () quads
+    foldM_ (generateAssemblyQuad wrappedOutFun) () quads
     generateAssemblyBEnd wrappedOutFun end
     return (offset, False)
 
@@ -153,13 +150,13 @@ generateAssemblyQuad outFun () (Q.Call r1 name args) =
         (\ofs arg -> do
             fetchVal outFun arg "rax"
             outFun $ "lea r8, [rsp + " ++ show ofs ++ "]"
-            outFun $ "mov [r8], rax"
+            outFun "mov [r8], rax"
             return (ofs + 8)
         )
-        8
+        (8 :: Integer)
         args
     outFun $ "call " ++ name
-    outFun $ "mov rax, [rsp]"
+    outFun "mov rax, [rsp]"
     outFun $ "add rsp, " ++ show (offset * 8)
     writeVal outFun r1 "rax"
 generateAssemblyQuad outFun () (Q.CallLoc r1 (addr, callOfs) args) =
@@ -169,14 +166,14 @@ generateAssemblyQuad outFun () (Q.CallLoc r1 (addr, callOfs) args) =
         (\ofs arg -> do
             fetchVal outFun arg "rax"
             outFun $ "lea r8, [rsp + " ++ show ofs ++ "]"
-            outFun $ "mov [r8], rax"
+            outFun "mov [r8], rax"
             return (ofs + 8)
         )
-        8
+        (8 :: Integer)
         args
     fetchVal outFun addr "rax"
     outFun $ "call [rax + " ++ show callOfs ++ " * 8]"
-    outFun $ "mov rax, [rsp]"
+    outFun "mov rax, [rsp]"
     outFun $ "add rsp, " ++ show (offset * 8)
     writeVal outFun r1 "rax"
 generateAssemblyQuad outFun () (Q.GetVar r1 r2) = do
@@ -188,22 +185,22 @@ generateAssemblyQuad outFun () (Q.AssignVar r1 r2) = do
 generateAssemblyQuad outFun () (Q.ReadPtr r1 r2 r3) = do
     fetchVal outFun r2 "rax"
     fetchVal outFun r3 "rsi"
-    outFun $ "lea rdx, [rax + rsi * 8]"
-    outFun $ "mov rax, [rdx]"
+    outFun "lea rdx, [rax + rsi * 8]"
+    outFun "mov rax, [rdx]"
     writeVal outFun r1 "rax"
 generateAssemblyQuad outFun () (Q.WritePtr r1 r2 r3) = do
     fetchVal outFun r1 "rax"
     fetchVal outFun r2 "rsi"
     fetchVal outFun r3 "rdx"
-    outFun $ "lea rdi, [rax + rsi * 8]"
-    outFun $ "mov [rdi], rdx"
+    outFun "lea rdi, [rax + rsi * 8]"
+    outFun "mov [rdi], rdx"
 
 generateAssemblyBEnd :: (String -> GenM ()) -> Q.BlockEnd -> GenM ()
 generateAssemblyBEnd outFun (Q.UnconditionalJump label) =
     outFun $ "jmp " ++ label
 generateAssemblyBEnd outFun (Q.ConditionalJump (Q.Loc cond) label1 label2) = do
     fetchVal outFun cond "rax"
-    outFun $ "cmp rax, 0"
+    outFun "cmp rax, 0"
     outFun $ "je " ++ label2
     outFun $ "jmp " ++ label1
 generateAssemblyBEnd outFun (Q.ConditionalJump (Q.Rel op loc1 loc2) label1 label2) = do
@@ -231,17 +228,17 @@ generateAssemblyBEnd outFun (Q.Return (Just reg)) = do
     outFun "ret"
 
 getRegistersFun :: ([Q.Block], [String]) -> [String]
-getRegistersFun (blocks, args) = S.toList $ (foldl getRegistersBlock S.empty blocks) S.\\ (S.fromList args)
+getRegistersFun (blocks, args) = S.toList $ foldl getRegistersBlock S.empty blocks S.\\ S.fromList args
 
 getRegistersBlock :: S.Set String -> Q.Block -> S.Set String
 getRegistersBlock regs (Q.Block _ _ quads bEnd) =
-    (foldl getRegistersQuad (getRegistersBEnd regs bEnd)  quads)
+    foldl getRegistersQuad (getRegistersBEnd regs bEnd)  quads
 
 getRegistersQuad :: S.Set String -> Q.Quadruple -> S.Set String
 getRegistersQuad regs (Q.Quadruple r1 _ r2 r3) =
-    (addLocationToRegisters r1 regs)
-        F.& (addLocationToRegisters r2)
-        F.& (addLocationToRegisters r3)
+    addLocationToRegisters r1 regs
+        F.& addLocationToRegisters r2
+        F.& addLocationToRegisters r3
 getRegistersQuad regs (Q.Call r _ rs) =
     foldr addLocationToRegisters (addLocationToRegisters r regs) rs
 getRegistersQuad regs (Q.CallLoc r (r1, _) rs) =
@@ -254,13 +251,13 @@ getRegistersQuad regs (Q.GetVar r1 r2) =
 getRegistersQuad regs (Q.AssignVar r1 r2) =
     S.insert r1 (addLocationToRegisters r2 regs)
 getRegistersQuad regs (Q.WritePtr r1 r2 r3) =
-    (addLocationToRegisters r1 regs)
-        F.& (addLocationToRegisters r2)
-        F.& (addLocationToRegisters r3)
+    addLocationToRegisters r1 regs
+        F.& addLocationToRegisters r2
+        F.& addLocationToRegisters r3
 getRegistersQuad regs (Q.ReadPtr r1 r2 r3) =
-    (addLocationToRegisters r1 regs)
-        F.& (addLocationToRegisters r2)
-        F.& (addLocationToRegisters r3)
+    addLocationToRegisters r1 regs
+        F.& addLocationToRegisters r2
+        F.& addLocationToRegisters r3
 
 getRegistersBEnd :: S.Set String -> Q.BlockEnd -> S.Set String
 getRegistersBEnd regs (Q.UnconditionalJump _) = regs

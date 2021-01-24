@@ -42,8 +42,8 @@ runFullCompile filename = do
             let pass1Result = runExcept (evalStateT (runReaderT (pass1 program) (M.empty, M.empty, Void, Nothing)) (M.empty, 0, 0))
             case pass1Result of
                 Left err -> printErrorAndExit err
-                Right p@(Program _ _ _) -> do
-                    hPutStrLn stderr $ "OK"
+                Right p@Program {} -> do
+                    hPutStrLn stderr "OK"
                     let outfilename = fileToS filename
                     let objectFilename = fileToO filename
                     let execFilename = dropExtension filename
