@@ -4,6 +4,12 @@
 
 char* __stradd(char* a, char* b)
 {
+    if (a == NULL) {
+        a = "";
+    }
+    if (b == NULL) {
+        b = "";
+    }
     int lenA = strlen(a), lenB = strlen(b);
     char* res = calloc(lenA + lenB + 1, sizeof(char));
     strcpy(res, a);
@@ -13,11 +19,23 @@ char* __stradd(char* a, char* b)
 
 int64_t __strcmp(char* a, char* b)
 {
+    if (a == NULL) {
+        a = "";
+    }
+    if (b == NULL) {
+        b = "";
+    }
     return strcmp(a, b) == 0;
 }
 
 int64_t __strncmp(char* a, char* b)
 {
+    if (a == NULL) {
+        a = "";
+    }
+    if (b == NULL) {
+        b = "";
+    }
     return strcmp(a, b) != 0;
 }
 
@@ -28,6 +46,9 @@ void _printInt(int64_t a)
 
 void _printString(char* c)
 {
+    if (c == NULL) {
+        c = "";
+    }
     printf("%s\n", c);
 }
 
