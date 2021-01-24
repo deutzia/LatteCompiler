@@ -111,7 +111,7 @@ generateAssemblyFun outFun offset blocks = do
     outFun "\n"
 
 generateAssemblyBlock :: (String -> GenM ()) -> (Int, Bool) -> Q.Block -> GenM (Int, Bool)
-generateAssemblyBlock outFun (offset, isFirst) (Q.Block label quads end) = do
+generateAssemblyBlock outFun (offset, isFirst) (Q.Block label _ quads end) = do
     outFun $ label ++ ":\n"
     let wrappedOutFun = wrapOut outFun
     when isFirst (do
@@ -234,7 +234,7 @@ getRegistersFun :: ([Q.Block], [String]) -> [String]
 getRegistersFun (blocks, args) = S.toList $ (foldl getRegistersBlock S.empty blocks) S.\\ (S.fromList args)
 
 getRegistersBlock :: S.Set String -> Q.Block -> S.Set String
-getRegistersBlock regs (Q.Block _ quads bEnd) =
+getRegistersBlock regs (Q.Block _ _ quads bEnd) =
     (foldl getRegistersQuad (getRegistersBEnd regs bEnd)  quads)
 
 getRegistersQuad :: S.Set String -> Q.Quadruple -> S.Set String

@@ -17,7 +17,7 @@ lcse = map (\(blocks, args) ->
     (removeDeadBlocks blocks', args))
 
 lcseSingleBlock :: Q.Block -> Q.Block
-lcseSingleBlock (Q.Block label quads blockEnd) =
+lcseSingleBlock (Q.Block label vars quads blockEnd) =
     let (subs, _, _, _, quads') = lcseQuads quads in
     let
         blockEnd' = case blockEnd of
@@ -53,7 +53,7 @@ lcseSingleBlock (Q.Block label quads blockEnd) =
             be@(Q.Return (Just loc)) -> case M.lookup loc subs of
                 Nothing -> be
                 Just loc' -> (Q.Return (Just loc'))
-    in Q.Block label (reverse quads') blockEnd'
+    in Q.Block label vars (reverse quads') blockEnd'
 
 -- canonicalForm of a quad is a form that makes all the necessary substitutions
 -- to eliminate unnecessary reading the same variable and performing the same
@@ -129,7 +129,7 @@ lcseQuads quads =
                                 vMap,
                                 ptrMap,
                                 acc)
-                Q.Call _ _ _ -> (subs, qMap, vMap, ptrMap, quad' : acc)
+                Q.Call _ _ _ -> (subs, qMap, vMap, M.empty, quad' : acc)
                 Q.CallLoc _ _ _ -> (subs, qMap, vMap, ptrMap, quad' : acc)
                 Q.GetVar r vName -> case M.lookup vName vMap of
                     Just oldRes ->
@@ -160,10 +160,10 @@ lcseQuads quads =
 
 removeDeadBlocks :: [Q.Block] -> [Q.Block]
 removeDeadBlocks [] = []
-removeDeadBlocks blocks@((Q.Block funEntry _ _) : _) =
+removeDeadBlocks blocks@((Q.Block funEntry _ _ _) : _) =
     let
         (graph, _, keyToVertex) =
-            G.graphFromEdges $ map (\block@(Q.Block blockName _ blockEnd) ->
+            G.graphFromEdges $ map (\block@(Q.Block blockName _ _ blockEnd) ->
                     case blockEnd of
                         Q.UnconditionalJump label -> (block, blockName, [label])
                         Q.ConditionalJump _ label0 label1 ->
@@ -176,7 +176,7 @@ removeDeadBlocks blocks@((Q.Block funEntry _ _) : _) =
         reachableSet = S.fromList reachables
     in
         filter
-            (\(Q.Block blockName _ _) ->
+            (\(Q.Block blockName _ _ _) ->
                 S.member
                     (Maybe.fromJust $ keyToVertex blockName)
                     reachableSet)

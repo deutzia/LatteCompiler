@@ -35,7 +35,7 @@ data Quadruple
     -- WritePtr l0 l1 l2 == [l0 + l1 * size] = l2
     | WritePtr Location Location Location
     deriving (Show, Eq, Ord)
-data Block = Block Label [Quadruple] BlockEnd deriving Show
+data Block = Block Label [F.Ident] [Quadruple] BlockEnd deriving Show
 data Condition = Loc Location | Rel RelOp Location Location deriving Show
 data Op
     = Add
@@ -54,7 +54,7 @@ data RelOp
     deriving (Show, Eq, Ord)
 
 -- generation triple
-type GenTriple = (Label, [Quadruple], [Block])
+type GenTriple = (Label, [F.Ident], [Quadruple], [Block])
 
 type StrEnv = M.Map F.Ident String
 -- map className ->
@@ -161,19 +161,19 @@ getStringName s = do
         Just name -> return (Str name)
 
 dereference :: GenTriple -> F.Lvalue -> QuadM (GenTriple, Location)
-dereference (label, quads, blocks) (F.VarRef _ _ ident) = do
+dereference (label, vars, quads, blocks) (F.VarRef _ _ ident) = do
     reg <- getNewTmpName
-    return ((label, (GetVar reg ident) : quads, blocks), reg)
+    return ((label, vars, (GetVar reg ident) : quads, blocks), reg)
 dereference triple (F.ArrRef _ _ lv expr) = do
     (triple', lv') <- dereference triple lv
-    ((label, quads, blocks), idx) <- getQuadsExpr triple' expr
+    ((label, vars, quads, blocks), idx) <- getQuadsExpr triple' expr
     idxP1 <- getNewTmpName
     let add1 = Quadruple idxP1 Add idx (Literal 1)
     result <- getNewTmpName
     let qRead = ReadPtr result lv' idxP1
-    return ((label, qRead : (add1 : quads), blocks), result)
+    return ((label, vars, qRead : (add1 : quads), blocks), result)
 dereference triple (F.ClassAttr _ _ lv fieldIdent) = do
-    ((label, quads, blocks), lv') <- dereference triple lv
+    ((label, vars, quads, blocks), lv') <- dereference triple lv
     case F.typeOfLvalue lv of
         F.Class classIdent -> do
                 classEnv <- ask
@@ -185,22 +185,26 @@ dereference triple (F.ClassAttr _ _ lv fieldIdent) = do
                                 Just offset -> do
                                     result <- getNewTmpName
                                     let q = ReadPtr result lv' (Literal offset)
-                                    return ((label, q : quads, blocks), result)
+                                    return
+                                        ((label,
+                                            vars,
+                                            q : quads, blocks),
+                                            result)
         _ -> undefined
 
 setVar :: GenTriple -> F.Lvalue -> Location -> QuadM GenTriple
-setVar (label, quads, blocks) (F.VarRef _ _ ident) rvalue =
+setVar (label, vars, quads, blocks) (F.VarRef _ _ ident) rvalue =
     let q = AssignVar ident rvalue in
-    return (label, q : quads, blocks)
+    return (label, vars, q : quads, blocks)
 setVar triple (F.ArrRef _ _ lv expr) rvalue = do
     (triple', lv') <- dereference triple lv
-    ((label, quads, blocks), idx) <- getQuadsExpr triple' expr
+    ((label, vars, quads, blocks), idx) <- getQuadsExpr triple' expr
     idxP1 <- getNewTmpName
     let add1 = Quadruple idxP1 Add idx (Literal 1)
     let q = WritePtr lv' idxP1 rvalue
-    return (label, q : add1 : quads, blocks)
+    return (label, vars, q : add1 : quads, blocks)
 setVar triple (F.ClassAttr _ _ lv fieldIdent) rvalue = do
-    ((l, qs, bs), lv') <- dereference triple lv
+    ((l, vs, qs, bs), lv') <- dereference triple lv
     case F.typeOfLvalue lv of
         F.Class classIdent -> do
                 classEnv  <- ask
@@ -211,8 +215,22 @@ setVar triple (F.ClassAttr _ _ lv fieldIdent) rvalue = do
                                 Nothing -> undefined
                                 Just offset -> do
                                     let q = WritePtr lv' (Literal offset) rvalue
-                                    return (l, q : qs, bs)
+                                    return (l, vs, q : qs, bs)
         _ -> undefined
+
+getWrittenVars :: F.Stmt -> [F.Ident]
+getWrittenVars (F.Empty _) = []
+getWrittenVars (F.BStmt _ (F.Block _ stmts)) = concatMap getWrittenVars stmts
+getWrittenVars (F.Decl _ _ items) = map (\(F.Item _ ident _) -> ident) items
+getWrittenVars (F.Ass _ lv _) = case lv of
+    F.VarRef _ _ ident -> [ident]
+    _ -> []
+getWrittenVars (F.Ret _ _) = []
+getWrittenVars (F.Cond _ _ thenStmt Nothing) = getWrittenVars thenStmt
+getWrittenVars (F.Cond _ _ thenStmt (Just elseStmt)) =
+    getWrittenVars thenStmt ++ getWrittenVars elseStmt
+getWrittenVars (F.While _ _ stmt) = getWrittenVars stmt
+getWrittenVars (F.SExp _ _) = []
 
 getQuadsProg :: F.Program -> ([([Block], [String])], StrEnv, [(String, [String])])
 getQuadsProg (F.Program _ classDefs funDefs) =
@@ -236,101 +254,126 @@ getQuadsFunDefs (prefix, fundefs) = do
 
 getQuadsFunDef :: (String -> String) -> F.FunDef -> QuadM ([Block], [String])
 getQuadsFunDef prefix (F.FunDef _ _ name args body) = do
-    (lastLabel, quads, blocks) <- getQuadsBlock (prefix name, [], []) body
+    (lastLabel, vars, quads, blocks) <-
+            getQuadsBlock (prefix name, [], [], []) body
     let argNames = map (\(_, _, argName) -> argName) args
     return (reverse $
-        (Block lastLabel (reverse quads) (Return Nothing)) : blocks, argNames)
+        (Block lastLabel vars (reverse quads) (Return Nothing)) : blocks,
+            argNames)
 
 getQuadsBlock :: GenTriple -> F.Block -> QuadM GenTriple
 getQuadsBlock triple (F.Block _ stmts) = foldM getQuadsStmt triple stmts
 
 getQuadsStmt :: GenTriple -> F.Stmt -> QuadM GenTriple
-getQuadsStmt (label, quads, blocks) (F.Empty _) =
-    return (label, quads, blocks)
-getQuadsStmt (label, quads, blocks) (F.BStmt _ b) = do
+getQuadsStmt triple (F.Empty _) =
+    return triple
+getQuadsStmt (label, vars, quads, blocks) (F.BStmt _ b) = do
     nextLabel <- getNewLabel
-    let block1 = Block label (reverse quads) (UnconditionalJump nextLabel)
-    (label', quads', blocks') <- getQuadsBlock
-        (nextLabel, [], block1 : blocks) b
+    let block1 = Block label vars (reverse quads) (UnconditionalJump nextLabel)
+    (label', vars', quads', blocks') <- getQuadsBlock
+        (nextLabel, [], [], block1 : blocks) b
     nextLabel' <- getNewLabel
-    let block2 = Block label' (reverse quads') (UnconditionalJump nextLabel')
-    return (nextLabel', [], block2 : blocks')
+    let block2 = Block
+            label'
+            vars'
+            (reverse quads')
+            (UnconditionalJump nextLabel')
+    return (nextLabel', [], [], block2 : blocks')
 getQuadsStmt triple (F.Decl _ _ items) =
     foldM
         (\t (F.Item _ vName expr) -> do
-            ((l, q, b), reg) <- getQuadsExpr t expr
-            return $ (l, (AssignVar vName reg) : q, b)
+            ((l, v, q, b), reg) <- getQuadsExpr t expr
+            return $ (l, v, (AssignVar vName reg) : q, b)
         )
         triple
         items
 getQuadsStmt triple (F.Ass _ lval expr) = do
     (triple', reg) <- getQuadsExpr triple expr
     setVar triple' lval reg
-getQuadsStmt (label, quads, blocks) (F.Ret _ Nothing) = do
+getQuadsStmt (label, vars, quads, blocks) (F.Ret _ Nothing) = do
     nextLabel <- getNewLabel
+    let block = Block label vars (reverse quads) (Return Nothing)
     return $
-        (nextLabel, [], (Block label (reverse quads) (Return Nothing)) : blocks)
+        (nextLabel,
+            [],
+            [],
+            block : blocks)
 getQuadsStmt triple (F.Ret _ (Just expr)) = do
     nextLabel <- getNewLabel
-    ((label, quads, blocks), reg) <- getQuadsExpr triple expr
-    let block = Block label (reverse quads) (Return (Just reg))
-    return $ (nextLabel, [], block : blocks)
+    ((label, vars, quads, blocks), reg) <- getQuadsExpr triple expr
+    let block = Block label vars (reverse quads) (Return (Just reg))
+    return $ (nextLabel, [], [], block : blocks)
 getQuadsStmt triple (F.Cond _ cond thenStmt Nothing) = do
     thenLabel <- getNewLabel
     endLabel <- getNewLabel
     blocks <- getQuadsBExpr triple cond thenLabel endLabel
-    (thenLabel', thenQuads, thenBlocks) <- getQuadsStmt
-        (thenLabel, [], blocks)
+    (thenLabel', thenVars, thenQuads, thenBlocks) <- getQuadsStmt
+        (thenLabel, [], [], blocks)
         thenStmt
     let thenBlock = Block
             thenLabel'
+            thenVars
             (reverse thenQuads)
             (UnconditionalJump endLabel)
-    return (endLabel, [], thenBlock : thenBlocks)
+    let vars = getWrittenVars thenStmt
+    return (endLabel, vars, [], thenBlock : thenBlocks)
 getQuadsStmt triple (F.Cond _ cond thenStmt (Just elseStmt)) = do
     thenLabel <- getNewLabel
     elseLabel <- getNewLabel
     endLabel <- getNewLabel
     blocks <- getQuadsBExpr triple cond thenLabel elseLabel
-    (thenLabel', thenQuads, thenBlocks) <- getQuadsStmt
-        (thenLabel, [], blocks)
+    (thenLabel', thenVars, thenQuads, thenBlocks) <- getQuadsStmt
+        (thenLabel, [], [], blocks)
         thenStmt
     let thenBlock = Block
             thenLabel'
+            thenVars
             (reverse thenQuads)
             (UnconditionalJump endLabel)
-    (elseLabel', elseQuads, elseBlocks) <- getQuadsStmt
-        (elseLabel, [], thenBlock : thenBlocks)
+    (elseLabel', elseVars, elseQuads, elseBlocks) <- getQuadsStmt
+        (elseLabel, [], [], thenBlock : thenBlocks)
         elseStmt
     let elseBlock = Block
             elseLabel'
+            elseVars
             (reverse elseQuads)
             (UnconditionalJump endLabel)
-    return $ (endLabel, [], elseBlock : elseBlocks)
-getQuadsStmt (label, quads, blocks) (F.While _ cond body) = do
+    let vars = getWrittenVars thenStmt ++ getWrittenVars elseStmt
+    return $ (endLabel, vars, [], elseBlock : elseBlocks)
+getQuadsStmt (label, vars, quads, blocks) (F.While _ cond body) = do
     bodyLabel <- getNewLabel
     condLabel <- getNewLabel
     endLabel <- getNewLabel
-    let block0 = Block label (reverse quads) (UnconditionalJump condLabel)
-    (bodyLabel', qs, blocks') <- getQuadsStmt
-            (bodyLabel, [], block0 : blocks) body
-    let block1 = Block bodyLabel' (reverse qs) (UnconditionalJump condLabel)
-    blocksWithCond <- getQuadsBExpr (condLabel, [], block1 : blocks') cond bodyLabel endLabel
-    return $ (endLabel, [], blocksWithCond)
+    let block0 = Block label vars (reverse quads) (UnconditionalJump condLabel)
+    (bodyLabel', bodyVars, qs, blocks') <- getQuadsStmt
+            (bodyLabel, [], [], block0 : blocks) body
+    let block1 = Block
+            bodyLabel'
+            bodyVars
+            (reverse qs)
+            (UnconditionalJump condLabel)
+    blocksWithCond <-
+        getQuadsBExpr
+            (condLabel, [], [], block1 : blocks')
+            cond
+            bodyLabel
+            endLabel
+    let vars' = getWrittenVars body
+    return $ (endLabel, vars', [], blocksWithCond)
 getQuadsStmt triple (F.SExp _ expr) = do
     (triple', _) <- getQuadsExpr triple expr
     return triple'
 
 getQuadsExpr :: GenTriple -> F.Expr -> QuadM (GenTriple, Location)
 getQuadsExpr triple (F.ENewArr _ _ _ expr) = do
-    ((label, quads, blocks), size) <- getQuadsExpr triple expr
+    ((label, vars, quads, blocks), size) <- getQuadsExpr triple expr
     arrAddr <- getNewTmpName
     sizeP1 <- getNewTmpName
     let add1 = Quadruple sizeP1 Add size (Literal 1)
     let call = Call arrAddr "allocate" [sizeP1]
     let writeSize = WritePtr arrAddr (Literal 0) size
-    return ((label, writeSize : (call : (add1 : quads)), blocks), arrAddr)
-getQuadsExpr (label, quads, blocks) (F.ENewObj _ t) = do
+    return ((label, vars, writeSize : (call : (add1 : quads)), blocks), arrAddr)
+getQuadsExpr (label, vars, quads, blocks) (F.ENewObj _ t) = do
     (size, vt) <- case t of
         F.Class classIdent -> do
             classEnv <- ask
@@ -341,10 +384,10 @@ getQuadsExpr (label, quads, blocks) (F.ENewObj _ t) = do
     res <- getNewTmpName
     let call = Call res "allocate" [Literal size]
     let qWrite = WritePtr res (Literal 0) (Str vt)
-    return ((label, qWrite : call : quads, blocks), res)
-getQuadsExpr (label, quads, blocks) (F.EVar _ _ ident) = do
+    return ((label, vars, qWrite : call : quads, blocks), res)
+getQuadsExpr (label, vars, quads, blocks) (F.EVar _ _ ident) = do
     reg <- getNewTmpName
-    return ((label, (GetVar reg ident) : quads, blocks), reg)
+    return ((label, vars, (GetVar reg ident) : quads, blocks), reg)
 getQuadsExpr triple (F.ELitInt _ n) = return (triple, Literal n)
 getQuadsExpr triple (F.ELitBool _ True) = return (triple, Literal 1)
 getQuadsExpr triple (F.ELitBool _ False) = return (triple, Literal 0)
@@ -353,7 +396,7 @@ getQuadsExpr triple (F.EString _ s) = do
     return (triple, name)
 getQuadsExpr triple (F.ECoerce _ _) = return (triple, Literal 0)
 getQuadsExpr triple (F.EApp _ _ fname args) = do
-    ((label, quads, blocks), args') <- foldM
+    ((label, vars, quads, blocks), args') <- foldM
         (\(t, acc) arg -> do
             (t', r) <- getQuadsExpr t arg
             return (t', r : acc)
@@ -361,10 +404,11 @@ getQuadsExpr triple (F.EApp _ _ fname args) = do
         (triple, [])
         args
     res <- getNewTmpName
-    return ((label, (Call res fname (reverse args')) : quads, blocks), res)
+    return
+        ((label, vars, (Call res fname (reverse args')) : quads, blocks), res)
 getQuadsExpr triple (F.EClassMethod _ _ classExpr methodIdent args) = do
     (triple', this) <- getQuadsExpr triple classExpr
-    ((label, quads, blocks), args') <- foldM
+    ((label, vars, quads, blocks), args') <- foldM
         (\(t, acc) arg -> do
             (t', r) <- getQuadsExpr t arg
             return (t', r : acc)
@@ -387,17 +431,18 @@ getQuadsExpr triple (F.EClassMethod _ _ classExpr methodIdent args) = do
                                     res
                                     (tmp, offset)
                                     (this : reverse args')
-                            return ((label, q2 : q1 : quads, blocks), res)
+                            return ((label, vars, q2 : q1 : quads, blocks), res)
         _ -> undefined
 getQuadsExpr triple (F.EClassField _ _ classExpr fieldIdent) =
     case F.typeOfExpr classExpr of
         F.Array _ -> if fieldIdent /= "length"
                 then undefined
                 else do
-                    ((label, quads, blocks), r) <- getQuadsExpr triple classExpr
+                    ((label, vars, quads, blocks), r) <-
+                            getQuadsExpr triple classExpr
                     res <- getNewTmpName
                     let q = ReadPtr res r (Literal 0)
-                    return ((label, q : quads, blocks), res)
+                    return ((label, vars, q : quads, blocks), res)
         F.Class classIdent -> do
                 classEnv  <- ask
                 case M.lookup classIdent classEnv of
@@ -406,35 +451,40 @@ getQuadsExpr triple (F.EClassField _ _ classExpr fieldIdent) =
                             case M.lookup fieldIdent fields of
                                 Nothing -> undefined
                                 Just offset -> do
-                                    ((l, qs, bs), r) <- getQuadsExpr
+                                    ((l, vs, qs, bs), r) <- getQuadsExpr
                                             triple
                                             classExpr
                                     res <- getNewTmpName
                                     let q = ReadPtr res r (Literal offset)
-                                    return ((l, q : qs, bs), res)
+                                    return ((l, vs, q : qs, bs), res)
         _ -> undefined
 getQuadsExpr triple (F.EArrAt _ _ arr idx) = do
     (triple', arr') <- getQuadsExpr triple arr
-    ((label, quads, blocks), idx') <- getQuadsExpr
+    ((label, vars, quads, blocks), idx') <- getQuadsExpr
         triple'
         (F.EIntOp F.Int Nothing idx F.Add (F.ELitInt Nothing 1))
     res <- getNewTmpName
     let q = ReadPtr res arr' idx'
-    return ((label, q : quads, blocks), res)
+    return ((label, vars, q : quads, blocks), res)
 getQuadsExpr triple (F.Neg _ e) = do
-    ((label, quads, blocks), eVar) <- getQuadsExpr triple e
+    ((label, vars, quads, blocks), eVar) <- getQuadsExpr triple e
     res <- getNewTmpName
-    return ((label, (Quadruple res Sub (Literal 0) eVar) : quads, blocks), res)
+    return
+        ((label, vars, (Quadruple res Sub (Literal 0) eVar) : quads, blocks),
+            res)
 getQuadsExpr triple (F.Not _ e) = do
-    ((label, quads, blocks), eVar) <- getQuadsExpr triple e
+    ((label, vars, quads, blocks), eVar) <- getQuadsExpr triple e
     res <- getNewTmpName
-    return ((label, (Quadruple res Sub (Literal 1) eVar) : quads, blocks), res)
+    return
+        ((label, vars, (Quadruple res Sub (Literal 1) eVar) : quads, blocks),
+            res)
 getQuadsExpr triple (F.EIntOp t _ e1 operand e2) = do
     (triple1, v1) <- getQuadsExpr triple e1
-    ((label, quads, blocks), v2) <- getQuadsExpr triple1 e2
+    ((label, vars, quads, blocks), v2) <- getQuadsExpr triple1 e2
     res <- getNewTmpName
     let retVal op =
-            return ((label, (Quadruple res op v1 v2) : quads, blocks), res)
+            return
+                ((label, vars, (Quadruple res op v1 v2) : quads, blocks), res)
     case operand of
         F.Mul -> retVal Mul
         F.Div -> retVal Div
@@ -444,7 +494,10 @@ getQuadsExpr triple (F.EIntOp t _ e1 operand e2) = do
             if t == F.Int
                 then retVal Add
                 else return
-                    ((label, (Call res "_stradd" [v1, v2]) : quads, blocks),
+                    ((label,
+                        vars,
+                        (Call res "_stradd" [v1, v2]) : quads,
+                        blocks),
                         res)
 getQuadsExpr triple e@(F.ERel _ _ _ _) = do
     res <- getNewTmpName
@@ -454,13 +507,15 @@ getQuadsExpr triple e@(F.ERel _ _ _ _) = do
     newLabel <- getNewLabel
     let blockTrue = Block
             labelTrue
+            []
             [AssignLocal res 1]
             (UnconditionalJump newLabel)
     let blockFalse = Block
             labelFalse
+            []
             [AssignLocal res 0]
             (UnconditionalJump newLabel)
-    return ((newLabel, [], blockFalse : (blockTrue : blocks)), res)
+    return ((newLabel, [], [], blockFalse : (blockTrue : blocks)), res)
 getQuadsExpr triple e@(F.EBoolOp _ _ _ _) = do
     res <- getNewTmpName
     labelTrue <- getNewLabel
@@ -469,36 +524,44 @@ getQuadsExpr triple e@(F.EBoolOp _ _ _ _) = do
     newLabel <- getNewLabel
     let blockTrue = Block
             labelTrue
+            []
             [AssignLocal res 1]
             (UnconditionalJump newLabel)
     let blockFalse = Block
             labelFalse
+            []
             [AssignLocal res 0]
             (UnconditionalJump newLabel)
-    return ((newLabel, [], blockFalse : (blockTrue : blocks)), res)
+    return ((newLabel, [], [], blockFalse : (blockTrue : blocks)), res)
 
 getQuadsBExpr :: GenTriple -> F.Expr -> Label -> Label -> QuadM [Block]
 getQuadsBExpr triple e@(F.EVar F.Bool _ _) labelTrue labelFalse = do
-    ((label, quads, blocks), reg) <- getQuadsExpr triple e
+    ((label, vars, quads, blocks), reg) <- getQuadsExpr triple e
     let block = Block
             label
+            vars
             (reverse quads)
             (ConditionalJump (Loc reg) labelTrue labelFalse)
     return $ block : blocks
-getQuadsBExpr (label, quads, blocks) (F.ELitBool _ True ) labelTrue _ =
-    let block = Block label (reverse quads) (UnconditionalJump labelTrue) in
+getQuadsBExpr (label, vars, quads, blocks) (F.ELitBool _ True ) labelTrue _ =
+    let
+        block = Block label vars (reverse quads) (UnconditionalJump labelTrue)
+    in
     return $ block : blocks
-getQuadsBExpr (label, quads, blocks) (F.ELitBool _ False) _ labelFalse =
-    let block = Block label (reverse quads) (UnconditionalJump labelFalse) in
+getQuadsBExpr (label, vars, quads, blocks) (F.ELitBool _ False) _ labelFalse =
+    let
+        block = Block label vars (reverse quads) (UnconditionalJump labelFalse)
+    in
     return $ block : blocks
 getQuadsBExpr triple (F.Not _ e) labelTrue labelFalse =
     getQuadsBExpr triple e labelFalse labelTrue
 getQuadsBExpr triple (F.ERel _ e1 operand e2) labelTrue labelFalse = do
     (triple', reg1)  <- getQuadsExpr triple e1
-    ((label, quads, blocks), reg2)  <- getQuadsExpr triple' e2
+    ((label, vars, quads, blocks), reg2)  <- getQuadsExpr triple' e2
     let retVal op =
             let block = Block
                     label
+                    vars
                     (reverse quads)
                     (ConditionalJump (Rel op reg1 reg2) labelTrue labelFalse)
             in return $ block : blocks
@@ -512,15 +575,16 @@ getQuadsBExpr triple (F.ERel _ e1 operand e2) labelTrue labelFalse = do
 getQuadsBExpr triple (F.EBoolOp _ e1 F.And e2) labelTrue labelFalse = do
     secondCondLabel <- getNewLabel
     blocks <- getQuadsBExpr triple e1 secondCondLabel labelFalse
-    getQuadsBExpr (secondCondLabel, [], blocks) e2 labelTrue labelFalse
+    getQuadsBExpr (secondCondLabel, [], [], blocks) e2 labelTrue labelFalse
 getQuadsBExpr triple (F.EBoolOp _ e1 F.Or e2) labelTrue labelFalse = do
     secondCondLabel <- getNewLabel
     blocks <- getQuadsBExpr triple e1 labelTrue secondCondLabel
-    getQuadsBExpr (secondCondLabel, [], blocks) e2 labelTrue labelFalse
+    getQuadsBExpr (secondCondLabel, [], [], blocks) e2 labelTrue labelFalse
 getQuadsBExpr triple expr labelTrue labelFalse = do
-    ((label, quads, blocks), reg) <- getQuadsExpr triple expr
+    ((label, vars, quads, blocks), reg) <- getQuadsExpr triple expr
     let block = Block
             label
+            vars
             (reverse quads)
             (ConditionalJump (Loc reg) labelTrue labelFalse)
     return $ block : blocks
