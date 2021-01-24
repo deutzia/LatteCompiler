@@ -53,6 +53,11 @@ multiple times, but not to temporary registers. This can be, however, fixed in
 quad generation - blocks of code have to be aware which variables have to be
 refetched at the begining. This way, GCSE is implemented.
 
+Tail call optimization is also supported by changing call to a particular
+function to jump to internal place of that function. This is slightly cursed,
+because as a result every function has an additional functionName.internal
+label after stack initialization.
+
 Example tests of noteworthy behaviours are located in example_tests directory:
 * test_arr_struct.lat shows that arrays of objects, objects with arrays etc are
   correctly supported
@@ -62,3 +67,5 @@ Example tests of noteworthy behaviours are located in example_tests directory:
 * test_lcse_correctness.lat shows the correct behaviour in case of function calls
   since those can perform memory writes. As a result, all cached memory reads
   are invalidated after a function call or at the beginning of a new block
+* tail_call.lat - loops forever on recursive calls, without tail call
+  optimization this would throw a segfault due to stack overflow
