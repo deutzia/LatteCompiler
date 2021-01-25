@@ -21,8 +21,5 @@ int main() {
     if (x < y) {
         printInt(x * 3 + y * 5 + z * 7);
     }
-    else {
-        printInt(x * 3 + y * 5 + z * 7);
-    }
     return 0;
 }

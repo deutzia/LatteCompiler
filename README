@@ -63,7 +63,7 @@ label after stack initialization.
 Example tests of noteworthy behaviours are located in example_tests directory:
 * test_arr_struct.lat shows that arrays of objects, objects with arrays etc are
   correctly supported
-* test_gcse shows that expressions are not recomputed in branches of an
+* test_gcse shows that expressions are not recomputed in a branch of an
   if-expression - blocks with labels other than lat_main are short and clearly
   don't perform complicated computations
 * test_lcse_correctness.lat shows the correct behaviour in case of function calls
