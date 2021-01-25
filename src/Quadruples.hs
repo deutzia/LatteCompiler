@@ -306,7 +306,7 @@ getQuadsStmt triple (F.Ret _ (Just expr@(F.EApp _ _ fName args))) = do
                         )
                     (triple, [])
                     args
-                let writes = zipWith AssignVar currentArgs args'
+                let writes = zipWith AssignVar currentArgs (reverse args')
                 nextLabel <- getNewLabel
                 let block = Block
                         label
