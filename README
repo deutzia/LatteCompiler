@@ -51,7 +51,9 @@ Optimizations supported: note that GCSE = LCSE performed on all blocks with the
 same cache. However, since my code is not in SSA form - I write to variables
 multiple times, but not to temporary registers. This can be, however, fixed in
 quad generation - blocks of code have to be aware which variables have to be
-refetched at the begining. This way, GCSE is implemented.
+refetched at the begining. This way, GCSE is implemented, but in a more
+inefficicient way than it could've been - all variables that are fethed in
+substatements are refetched.
 
 Tail call optimization is also supported by changing call to a particular
 function to jump to internal place of that function. This is slightly cursed,
@@ -69,3 +71,4 @@ Example tests of noteworthy behaviours are located in example_tests directory:
   are invalidated after a function call or at the beginning of a new block
 * tail_call.lat - loops forever on recursive calls, without tail call
   optimization this would throw a segfault due to stack overflow
+* tco.lat - another example of tail call (with two arguments)

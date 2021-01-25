@@ -1,0 +1,12 @@
+int main() {
+ printInt(tfac(6));
+ return 0;
+ }
+
+int tfac(int n) { return afac(1, n); }
+
+int afac(int a, int n) {
+  if(n<2) { return a; }
+  else { return afac(n*a,n-1); }
+}
+
