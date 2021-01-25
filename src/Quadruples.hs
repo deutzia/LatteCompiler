@@ -217,19 +217,41 @@ setVar triple (F.ClassAttr _ _ lv fieldIdent) rvalue = do
                                     return (l, vs, q : qs, bs)
         _ -> undefined
 
-getWrittenVars :: F.Stmt -> [F.Ident]
-getWrittenVars (F.Empty _) = []
-getWrittenVars (F.BStmt _ (F.Block _ stmts)) = concatMap getWrittenVars stmts
-getWrittenVars (F.Decl _ _ items) = map (\(F.Item _ ident _) -> ident) items
-getWrittenVars (F.Ass _ lv _) = case lv of
-    F.VarRef _ _ ident -> [ident]
-    _ -> []
-getWrittenVars (F.Ret _ _) = []
-getWrittenVars (F.Cond _ _ thenStmt Nothing) = getWrittenVars thenStmt
-getWrittenVars (F.Cond _ _ thenStmt (Just elseStmt)) =
-    getWrittenVars thenStmt ++ getWrittenVars elseStmt
-getWrittenVars (F.While _ _ stmt) = getWrittenVars stmt
-getWrittenVars (F.SExp _ _) = []
+getUsedVars :: F.Stmt -> [F.Ident]
+getUsedVars (F.Empty _) = []
+getUsedVars (F.BStmt _ (F.Block _ stmts)) = concatMap getUsedVars stmts
+getUsedVars (F.Decl _ _ items) =
+    concatMap (\(F.Item _ ident e) -> ident : getUsedVarsExp e) items
+getUsedVars (F.Ass _ lv e) = case lv of
+    F.VarRef _ _ ident -> ident : getUsedVarsExp e
+    _ -> getUsedVarsExp e
+getUsedVars (F.Ret _ Nothing) = []
+getUsedVars (F.Ret _ (Just e)) = getUsedVarsExp e
+getUsedVars (F.Cond _ e thenStmt Nothing) =
+    getUsedVarsExp e ++ getUsedVars thenStmt
+getUsedVars (F.Cond _ e thenStmt (Just elseStmt)) =
+    getUsedVarsExp e ++ getUsedVars thenStmt ++ getUsedVars elseStmt
+getUsedVars (F.While _ e stmt) = getUsedVarsExp e ++ getUsedVars stmt
+getUsedVars (F.SExp _ e) = getUsedVarsExp e
+
+getUsedVarsExp :: F.Expr -> [F.Ident]
+getUsedVarsExp (F.ENewArr _ _ _ e) = getUsedVarsExp e
+getUsedVarsExp (F.EVar _ _ ident) = [ident]
+getUsedVarsExp (F.ENewObj {}) = []
+getUsedVarsExp (F.ELitInt {}) = []
+getUsedVarsExp (F.ELitBool {}) = []
+getUsedVarsExp (F.EString {}) = []
+getUsedVarsExp (F.ECoerce {}) = []
+getUsedVarsExp (F.EApp _ _ _ args) = concatMap getUsedVarsExp args
+getUsedVarsExp (F.EClassMethod _ _ e _ args) =
+    concatMap getUsedVarsExp (e : args)
+getUsedVarsExp (F.EClassField _ _ e _) = getUsedVarsExp e
+getUsedVarsExp (F.EArrAt _ _ e1 e2) = getUsedVarsExp e1 ++ getUsedVarsExp e2
+getUsedVarsExp (F.Neg _ e) = getUsedVarsExp e
+getUsedVarsExp (F.Not _ e) = getUsedVarsExp e
+getUsedVarsExp (F.EIntOp _ _ e1 _ e2) = getUsedVarsExp e1 ++ getUsedVarsExp e2
+getUsedVarsExp (F.ERel _ e1 _ e2) = getUsedVarsExp e1 ++ getUsedVarsExp e2
+getUsedVarsExp (F.EBoolOp _ e1 _ e2) = getUsedVarsExp e1 ++ getUsedVarsExp e2
 
 getQuadsProg :: F.Program -> ([([Block], [String])], StrEnv, [(String, [String])])
 getQuadsProg (F.Program _ classDefs funDefs) =
@@ -336,7 +358,7 @@ getQuadsStmt triple (F.Cond _ cond thenStmt Nothing) = do
             thenVars
             (reverse thenQuads)
             (UnconditionalJump endLabel)
-    let vars = getWrittenVars thenStmt
+    let vars = getUsedVars thenStmt
     return (endLabel, vars, [], thenBlock : thenBlocks)
 getQuadsStmt triple (F.Cond _ cond thenStmt (Just elseStmt)) = do
     thenLabel <- getNewLabel
@@ -351,21 +373,22 @@ getQuadsStmt triple (F.Cond _ cond thenStmt (Just elseStmt)) = do
             thenVars
             (reverse thenQuads)
             (UnconditionalJump endLabel)
+    let vars = getUsedVars thenStmt
     (elseLabel', elseVars, elseQuads, elseBlocks) <- getQuadsStmt
-        (elseLabel, [], [], thenBlock : thenBlocks)
+        (elseLabel, vars, [], thenBlock : thenBlocks)
         elseStmt
     let elseBlock = Block
             elseLabel'
             elseVars
             (reverse elseQuads)
             (UnconditionalJump endLabel)
-    let vars = getWrittenVars thenStmt ++ getWrittenVars elseStmt
-    return (endLabel, vars, [], elseBlock : elseBlocks)
+    let vars' = vars ++ getUsedVars elseStmt
+    return (endLabel, vars', [], elseBlock : elseBlocks)
 getQuadsStmt (label, vars, quads, blocks) (F.While _ cond body) = do
     bodyLabel <- getNewLabel
     condLabel <- getNewLabel
     endLabel <- getNewLabel
-    let vars' = getWrittenVars body
+    let vars' = getUsedVars body
     let block0 = Block label vars (reverse quads) (UnconditionalJump condLabel)
     (bodyLabel', bodyVars, qs, blocks') <- getQuadsStmt
             (bodyLabel, vars', [], block0 : blocks) body
