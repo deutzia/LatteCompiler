@@ -36,7 +36,7 @@ plan to change it in the next iteration).
 Due to different calling convention than in C, additional layer of translation
 between latc generated code and linked C code is needed, therefore libs/ contain
 not only the runtime.c with implementation of standard function, but also
-calls.asm, which traslates from one calling convention to another.
+calls.asm, which translates from one calling convention to another.
 
 There is support for:
 * arrays
@@ -51,8 +51,8 @@ Optimizations supported: note that GCSE = LCSE performed on all blocks with the
 same cache. However, since my code is not in SSA form - I write to variables
 multiple times, but not to temporary registers. This can be, however, fixed in
 quad generation - blocks of code have to be aware which variables have to be
-refetched at the begining. This way, GCSE is implemented, but in a more
-inefficicient way than it could've been - all variables that are fethed in
+refetched at the beginning. This way, GCSE is implemented, but in a more
+inefficient way than it could've been - all variables that are fetched in
 substatements are refetched.
 
 Tail call optimization is also supported by changing call to a particular
